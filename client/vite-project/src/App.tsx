@@ -110,6 +110,51 @@ function App() {
     animate();
   }, []);
 
+
+  interface CardProps {
+    label: string;
+  }
+
+  const Card: React.FC<CardProps> = ({ label }) => (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        border: "1px solid black",
+        height: "9.8em",
+        width: "7em",
+        background: "pink",
+        borderRadius: "20px",
+      }}
+    >
+      {label}
+    </div>
+  );
+
+  const centralDecks = ["Deck 1", "Deck 2"];
+  const localHand = ["Card 1", "Card 2", "Card 3", "Card 4"];
+  const opponentHand = ["Card 1", "Card 2", "Card 3", "Card 4"];
+
+  const renderRow = (items: string[], top: string) => (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "row",
+        position: "absolute",
+        top,
+        left: "50%",
+        transform: "translate(-50%, -50%)",
+        background: "orange",
+        gap: "5em",
+      }}
+    >
+      {items.map((label, idx) => (
+        <Card key={idx} label={label} />
+      ))}
+    </div>
+  );
+
   return (
     <div
       id="cursor-container"
@@ -120,9 +165,14 @@ function App() {
         overflow: "hidden",
       }}
     >
-      <h1 style={{ position: "absolute", top: 10, left: 10 }}>
-        1v1 Mouse Tracker
-      </h1>
+      {/* Central Decks */}
+      {renderRow(centralDecks, "50%")}
+
+      {/* Local Hand */}
+      {renderRow(localHand, "85%")}
+
+      {/* Opponent Hand */}
+      {renderRow(opponentHand, "15%")}
 
       {/* Local cursor */}
       <div
