@@ -43,6 +43,11 @@ wss.on("connection", (ws) => {
   ws.roomId = null;
   console.log(`Player connected: ${ws.id}`);
 
+  ws.send(JSON.stringify({
+    type: "ASSIGN_ID",
+    playerId: ws.id
+  }));
+
   ws.on("message", (msg) => {
     let data;
     try { data = JSON.parse(msg); } catch { return; }
@@ -52,14 +57,39 @@ wss.on("connection", (ws) => {
         if (waitingPlayers.length > 0) {
           const opponent = waitingPlayers.shift();
           const roomId = nanoid();
-          rooms.set(roomId, { players: [ws, opponent] });
+
+          const deck = createDeck();
+
+          const playerADeck = deck.slice(0, 26);
+          const playerBDeck = deck.slice(26, 52);
+
+          const room = {
+            players: [ws, opponent],
+            game_state: {
+              [ws.id]: {
+                deck: playerADeck,
+                hand: []
+              },
+              [opponent.id]: {
+                deck: playerBDeck,
+                hand: []
+              },
+              center: {
+                pile1: [],
+                pile2: []
+              }
+            }
+          };
+
+          rooms.set(roomId, room);
           ws.roomId = roomId;
           opponent.roomId = roomId;
 
           broadcastRoom(roomId, {
             type: "MATCH_FOUND",
             roomId,
-            players: [ws.id, opponent.id]
+            players: [ws.id, opponent.id],
+            state: room.game_state,
           });
         } else {
           waitingPlayers.push(ws);
@@ -97,13 +127,34 @@ wss.on("connection", (ws) => {
       const room = rooms.get(ws.roomId);
       const opponent = room.players.find(p => p !== ws);
       if (opponent && opponent.readyState === WebSocket.OPEN) {
-        opponent.send(JSON.stringify({ type: "OPPONENT_DISCONNECTED" }));
+        opponent.send(JSON.stringify({ type: "OPPONENT_DISCONNECTED" , playerId: ws.id}));
         opponent.roomId = null;
       }
       rooms.delete(ws.roomId);
     }
   });
 });
+
+function createDeck() {
+  const suits = ["♠", "♥", "♦", "♣"];
+  const values = ["A","2","3","4","5","6","7","8","9","10","J","Q","K"];
+  const deck = [];
+
+  for (const suit of suits) {
+    for (const value of values) {
+      deck.push(`${value}${suit}`);
+    }
+  }
+  return shuffle(deck);
+}
+
+function shuffle(array) {
+  for (let i = array.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [array[i], array[j]] = [array[j], array[i]];
+  }
+  return array;
+}
 
 server.listen(8080, () => {
   console.log("Backend + WS server running on http://localhost:8080");

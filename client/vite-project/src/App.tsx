@@ -1,5 +1,5 @@
 // App.tsx
-import { useEffect, useRef } from "react";
+import { useState, useEffect, useRef } from "react";
 
 interface CursorPosition {
   x: number;
@@ -10,41 +10,77 @@ interface Opponents {
   [id: string]: CursorPosition;
 }
 
+interface PlayerState {
+  deck: string[];
+  hand: string[];
+}
+
+interface GameState {
+  // index signature: player IDs map to PlayerState
+  [playerId: string]: PlayerState | { pile1: string[]; pile2: string[] };
+  center: {
+    pile1: string[];
+    pile2: string[];
+  };
+}
+
+interface CardProps {
+  label: string;
+  draggable?: boolean;
+  onDragStart?: () => void;
+}
+
 function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const localCursorRef = useRef<HTMLDivElement | null>(null);
   const opponentsRef = useRef<Opponents>({}); // store latest positions
   const opponentDivsRef = useRef<Record<string, HTMLDivElement>>({}); // map playerId -> div
   const lastSentRef = useRef<number>(0);
+  const [findMatchDisabled, setFindMatchDisabled] = useState(false);
+  const [gameState, setGameState] = useState<GameState | null>(null);
+  const [playerId, setPlayerId] = useState<string | null>(null);
+  const playerIdRef = useRef<string | null>(null);
 
   // Connect WS and matchmaking
   useEffect(() => {
     const ws = new WebSocket("ws://localhost:8080/ws");
     wsRef.current = ws;
 
+    // Connection Begin
     ws.onopen = () => {
       console.log("✅ Connected to server");
-      ws.send(JSON.stringify({ type: "FIND_MATCH" }));
     };
 
+    // From Server
     ws.onmessage = (event) => {
       const data = JSON.parse(event.data);
 
       switch (data.type) {
         case "MATCH_FOUND":
           console.log("Match found!", data.players);
+          console.log("Room State", data.state);
+          setPlayerId(playerIdRef.current);
+          setGameState(data.state);
+          setFindMatchDisabled(true);
           break;
 
         case "MOUSE_UPDATE":
-          // Update ref, not state
           opponentsRef.current[data.playerId] = { x: data.x, y: data.y };
           break;
 
         case "OPPONENT_DISCONNECTED":
+          console.log("OPPONENT DISCONNECTED")
+          setFindMatchDisabled(false);
           const div = opponentDivsRef.current[data.playerId];
           if (div && div.parentNode) div.parentNode.removeChild(div);
           delete opponentsRef.current[data.playerId];
           delete opponentDivsRef.current[data.playerId];
+          break;
+
+        case "ASSIGN_ID":
+          console.log("ASSIGN_ID")
+          playerIdRef.current = data.playerId
+          console.log(playerIdRef)
           break;
 
         default:
@@ -110,13 +146,34 @@ function App() {
     animate();
   }, []);
 
+  const centralDecks = [
+    gameState?.center.pile1[0] ?? "Empty", 
+    gameState?.center.pile2[0] ?? "Empty", 
+  ];
 
-  interface CardProps {
-    label: string;
-  }
+  const myHand =
+    playerId && gameState
+      ? (gameState[playerId] as PlayerState).deck.slice(0, 4)
+      : [];
 
-  const Card: React.FC<CardProps> = ({ label }) => (
+  const opponentHand =
+    playerId && gameState
+      ? Object.keys(gameState)
+          .filter((id) => id !== "center" && id !== playerId)
+          .map((id) => (gameState[id] as PlayerState).deck.slice(0, 4))[0] ?? []
+      : [];
+
+  console.log("My Hand: ", myHand)
+  console.log("Opponent: ", opponentHand)
+
+  const Card: React.FC<CardProps> = ({ 
+    label,
+    draggable,
+    onDragStart
+  }) => (
     <div
+      draggable={draggable}
+      onDragStart={onDragStart}
       style={{
         display: "flex",
         justifyContent: "center",
@@ -126,15 +183,13 @@ function App() {
         width: "7em",
         background: "pink",
         borderRadius: "20px",
+        cursor: draggable ? "grab" : "default",
+        userSelect: "none",
       }}
     >
       {label}
     </div>
   );
-
-  const centralDecks = ["Deck 1", "Deck 2"];
-  const localHand = ["Card 1", "Card 2", "Card 3", "Card 4"];
-  const opponentHand = ["Card 1", "Card 2", "Card 3", "Card 4"];
 
   const renderRow = (items: string[], top: string) => (
     <div
@@ -165,11 +220,29 @@ function App() {
         overflow: "hidden",
       }}
     >
+      <button
+        id="find_match_btn"
+        style={{
+          position: 'absolute',
+          top: "10%",
+          left: "10%",
+          zIndex: 100,
+        }}
+        onClick={() => {
+          console.log("FIND_MATCH")
+          wsRef.current?.send(JSON.stringify({ type: "FIND_MATCH" }));
+          setFindMatchDisabled(true);
+        }}
+        disabled={findMatchDisabled}
+      >
+        Find Match
+      </button>
+
       {/* Central Decks */}
       {renderRow(centralDecks, "50%")}
 
       {/* Local Hand */}
-      {renderRow(localHand, "85%")}
+      {renderRow(myHand, "85%")}
 
       {/* Opponent Hand */}
       {renderRow(opponentHand, "15%")}
