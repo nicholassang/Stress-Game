@@ -1,3 +1,4 @@
+// server.js
 const express = require("express");
 const http = require("http");
 const WebSocket = require("ws");
@@ -48,7 +49,7 @@ wss.on("connection", (ws) => {
     playerId: ws.id
   }));
 
-  ws.on("message", (msg) => {
+  ws.on("message", async (msg) => {
     let data;
     try { data = JSON.parse(msg); } catch { return; }
 
@@ -63,21 +64,26 @@ wss.on("connection", (ws) => {
           const playerADeck = deck.slice(0, 26);
           const playerBDeck = deck.slice(26, 52);
 
+          const playerAHand = playerADeck.splice(0, 4);
+          const playerBHand = playerBDeck.splice(0, 4);
+
           const room = {
             players: [ws, opponent],
+            playerOrder: [ws.id, opponent.id],
+            countdownActive: false,
             game_state: {
               [ws.id]: {
                 deck: playerADeck,
-                hand: []
+                hand: playerAHand,
               },
               [opponent.id]: {
                 deck: playerBDeck,
-                hand: []
+                hand: playerBHand,
               },
-              center: {
-                pile1: [],
-                pile2: []
-              }
+            center: {
+              pile1: { cards: [], autoRefilled: false },
+              pile2: { cards: [], autoRefilled: false },
+              },
             }
           };
 
@@ -85,10 +91,12 @@ wss.on("connection", (ws) => {
           ws.roomId = roomId;
           opponent.roomId = roomId;
 
+          await ensurePlayableState(room, roomId);
+
           broadcastRoom(roomId, {
             type: "MATCH_FOUND",
             roomId,
-            players: [ws.id, opponent.id],
+            players: room.playerOrder,
             state: room.game_state,
           });
         } else {
@@ -120,18 +128,31 @@ wss.on("connection", (ws) => {
         if (!player) return;
 
         const { card, pile } = data;
+        const topCard = room.game_state.center[pile].cards[0];
 
-        // Remove card from player's deck (or hand later)
-        player.deck = player.deck.filter((c) => c !== card);
+        // Enforce playable card
+        if (!isPlayable(card, topCard)) {
+          return; 
+        }
 
-        // Add card to center pile
-        room.game_state.center[pile].unshift(card);
+        // Remove card from hand
+        player.hand = player.hand.filter(c => c !== card);
 
-        // Broadcast updated state
+        // Draw new card from deck if hand < 4
+        while (player.hand.length < 4 && player.deck.length > 0) {
+          player.hand.push(player.deck.shift());
+        }
+
+        // Add card to pile
+        room.game_state.center[pile].cards.unshift(card);
+
         broadcastRoom(ws.roomId, {
           type: "GAME_UPDATE",
           state: room.game_state,
         });
+
+        await ensurePlayableState(room, ws.roomId);
+
         break;
       }
       case "STRESS": {
@@ -148,16 +169,28 @@ wss.on("connection", (ws) => {
         if (!opponent) return;
         // Collect all center cards
         const collectedCards = [
-          ...game.center.pile1,
-          ...game.center.pile2,
+          ...game.center.pile1.cards,
+          ...game.center.pile2.cards,
         ];
         if (collectedCards.length === 0) return;
         // Add to opponent's deck (bottom of deck)
         opponent.deck.push(...collectedCards);
         // Clear center piles
-        game.center.pile1.length = 0;
-        game.center.pile2.length = 0;
-        
+        game.center.pile1.cards.length = 0;
+        game.center.pile2.cards.length = 0;
+
+        const piles = ["pile1", "pile2"];
+        const playerIds = Object.keys(game).filter(id => id !== "center");
+
+        for (const pile of piles) {
+          if (game.center[pile].length === 0) {
+            for (const pid of playerIds) {
+              const card = game[pid].deck.shift();
+              if (card) game.center[pile].cards.unshift(card);
+            }
+          }
+        }
+
         // Broadcast updated state
         broadcastRoom(ws.roomId, {
           type: "GAME_UPDATE",
@@ -207,6 +240,104 @@ function shuffle(array) {
     [array[i], array[j]] = [array[j], array[i]];
   }
   return array;
+}
+
+// Convert card rank to number
+function getRank(card) {
+  if (!card) return null;
+  const rank = card.slice(0, -1);
+  switch(rank){
+    case 'A': return 1;
+    case 'J': return 11;
+    case 'Q': return 12;
+    case 'K': return 13;
+    default: return parseInt(rank);
+  }
+}
+
+// Check if a card can be played on top of another
+function isPlayable(draggedCard, topCard) {
+  if (!draggedCard || !topCard) return false;
+  const d = getRank(draggedCard);
+  const t = getRank(topCard);
+  if (d == null || t == null) return false;
+  return Math.abs(d - t) === 1 || (d === 1 && t === 13) || (d === 13 && t === 1);
+}
+
+// Ensure center piles always have playable cards
+async function ensurePlayableState(room, roomId) {
+  if (room.countdownActive) return;
+
+  const game = room.game_state;
+  const piles = ["pile1", "pile2"];
+  const playerIds = Object.keys(game).filter(id => id !== "center");
+
+  // Fill empty piles immediately with one card from each player's deck
+  for (const pile of piles) {
+    if (game.center[pile].cards.length === 0) {
+      for (const pid of playerIds) {
+        const card = game[pid].deck.shift();
+        if (card) game.center[pile].cards.unshift(card);
+      }
+      game.center[pile].autoRefilled = true;
+    }
+  }
+
+  // Check if any pile is playable
+  const anyPlayable = piles.some(pile => {
+    const topCard = game.center[pile].cards[0];
+    if (!topCard) return false;
+    return playerIds.some(pid =>
+      game[pid].hand.some(c => isPlayable(c, topCard))
+    );
+  });
+
+  // Check if Stress Button is available
+  let stressAvailable = false;
+  const pile1Top = game.center.pile1.cards[0];
+  const pile2Top = game.center.pile2.cards[0];
+
+  if (pile1Top && pile2Top) {
+    stressAvailable = pile1Top.slice(0, -1) === pile2Top.slice(0, -1);
+  }
+
+  // Trigger countdown if no playable cards and stress not available
+  if (!anyPlayable && !stressAvailable) {
+    console.log("⏳ No playable cards on both piles — starting countdown");
+
+    room.countdownActive = true;
+
+    for (let i = 3; i > 0; i--) {
+      broadcastCountdown(roomId, i);
+      await new Promise(res => setTimeout(res, 1000));
+    }
+
+    // Refill piles with one card from each player
+    for (let i = 0; i < piles.length; i++) {
+      const pile = piles[i];
+      const pid = playerIds[i];
+      if (pid) {
+        const card = game[pid].deck.shift();
+        if (card) game.center[pile].cards.unshift(card);
+      }
+      game.center[pile].autoRefilled = true;
+    }
+
+    broadcastRoom(roomId, { type: "GAME_UPDATE", state: game });
+    room.countdownActive = false;
+
+    for (const pile of piles) {
+      game.center[pile].autoRefilled = false;
+    }
+  }
+}
+
+function broadcastCountdown(roomId, seconds) {
+  broadcastRoom(roomId, {
+    type: "COUNTDOWN",
+    seconds,
+    message: `Refilling pile in ${seconds}...`
+  });
 }
 
 server.listen(8080, () => {

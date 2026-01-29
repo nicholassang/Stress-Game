@@ -15,12 +15,16 @@ interface PlayerState {
   hand: string[];
 }
 
+interface Pile {
+  cards: string[];
+  autoRefilled: boolean;
+}
+
 interface GameState {
-  // index signature: player IDs map to PlayerState
-  [playerId: string]: PlayerState | { pile1: string[]; pile2: string[] };
+  [playerId: string]: PlayerState | { pile1: Pile; pile2: Pile };
   center: {
-    pile1: string[];
-    pile2: string[];
+    pile1: Pile;
+    pile2: Pile;
   };
 }
 
@@ -42,7 +46,7 @@ function App() {
   const [playerId, setPlayerId] = useState<string | null>(null);
   const playerIdRef = useRef<string | null>(null);
   const [draggedCard, setDraggedCard] = useState<string | null>(null);
-
+  const [message, setMessage] = useState<string | null>(null);
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -89,7 +93,12 @@ function App() {
         case "GAME_UPDATE":
           console.log("GAME_UPDATE")
           console.log("Updated Game_State: ", data.state)
+          setMessage("");
           setGameState(data.state);
+          break;
+
+        case "COUNTDOWN":
+          setMessage(data.message);
           break;
 
         default:
@@ -130,6 +139,7 @@ function App() {
     const animate = () => {
       const container = document.getElementById("cursor-container");
       if (container) {
+        const height = window.innerHeight;
         for (const [id, pos] of Object.entries(opponentsRef.current)) {
           let div = opponentDivsRef.current[id];
           if (!div) {
@@ -145,9 +155,13 @@ function App() {
             container.appendChild(div);
             opponentDivsRef.current[id] = div;
           }
-          // update position
-          div.style.left = `${pos.x}px`;
-          div.style.top = `${pos.y}px`;
+
+          // Inverse Opponent Cursor
+          const mirroredX = pos.x;
+          const mirroredY = height - pos.y;
+
+          div.style.left = `${mirroredX}px`;
+          div.style.top = `${mirroredY}px`;
         }
       }
       requestAnimationFrame(animate);
@@ -157,14 +171,14 @@ function App() {
 
   const myHand =
     playerId && gameState
-      ? (gameState[playerId] as PlayerState).deck.slice(0, 4).reverse()
+      ? (gameState[playerId] as PlayerState).hand
       : [];
 
   const opponentHand =
     playerId && gameState
       ? Object.keys(gameState)
           .filter((id) => id !== "center" && id !== playerId)
-          .map((id) => (gameState[id] as PlayerState).deck.slice(0, 4))[0] ?? []
+          .map((id) => (gameState[id] as PlayerState).hand)[0] ?? []
       : [];
 
   console.log("My Hand: ", myHand)
@@ -172,41 +186,33 @@ function App() {
   console.log("Central Piles: ", gameState?.center)
 
   // Order Central Deck
-  const playerIds =
-    gameState
-      ? Object.keys(gameState)
-          .filter((id) => id !== "center")
-          .sort()
-      : [];
-
-  const amIFirstPlayer =
-    !!playerId && playerIds[0] === playerId;
-
-  const viewPiles =
-    gameState
-      ? amIFirstPlayer
-        ? {
-            left: gameState.center.pile1,
-            right: gameState.center.pile2,
-          }
-        : {
-            left: gameState.center.pile2,
-            right: gameState.center.pile1,
-          }
-      : {
-          left: [],
-          right: [],
-        };
+  const viewPiles = gameState
+    ? {
+        left: gameState.center.pile1.cards,
+        right: gameState.center.pile2.cards,
+      }
+    : {
+        left: [],
+        right: [],
+      };
 
   // Update Stress Btn if central deck piles no. are similiar
   useEffect(() => {
-    const pile1Top = gameState?.center?.pile1?.[0];
-    const pile2Top = gameState?.center?.pile2?.[0];
+    const pile1 = gameState?.center?.pile1;
+    const pile2 = gameState?.center?.pile2;
+
+    if (!pile1?.cards.length || !pile2?.cards.length) {
+      setShowStressBtn(false);
+      return;
+    }
+
+    const pile1Top = pile1.cards[0];
+    const pile2Top = pile2.cards[0];
 
     const shouldShow =
-      !!pile1Top &&
-      !!pile2Top &&
-      pile1Top.slice(0, -1) === pile2Top.slice(0, -1);
+      pile1Top.slice(0, -1) === pile2Top.slice(0, -1) &&
+      !pile1.autoRefilled &&
+      !pile2.autoRefilled;
 
     setShowStressBtn(shouldShow);
   }, [gameState]);
@@ -267,42 +273,23 @@ function App() {
   );
 
   const handleDropOnPile = (viewPile: "left" | "right") => {
-    if (!draggedCard || !playerId || !gameState) return;
+    if (!draggedCard || !playerId) return;
 
-    const serverPile =
-      amIFirstPlayer
-        ? viewPile === "left" ? "pile1" : "pile2"
-        : viewPile === "left" ? "pile2" : "pile1";
+    const serverPile = viewPile === "left" ? "pile1" : "pile2";
 
-    const topCard = gameState.center[serverPile][0];
+    wsRef.current?.send(JSON.stringify({
+      type: "PLAY_CARD",
+      card: draggedCard,
+      pile: serverPile
+    }));
 
-    if (!topCard) {
-      sendPlay(serverPile);
-      return;
-    }
-
-    const draggedRank = parseInt(draggedCard.slice(0, -1));
-    const topRank = parseInt(topCard.slice(0, -1));
-
-    const isValid =
-      draggedRank === topRank + 1 ||
-      draggedRank === topRank - 1;
-
-    if (!isValid) return;
-
-    sendPlay(serverPile);
-
-    function sendPlay(pile: "pile1" | "pile2") {
-      wsRef.current?.send(
-        JSON.stringify({
-          type: "PLAY_CARD",
-          card: draggedCard,
-          pile,
-        })
-      );
-      setDraggedCard(null);
-    }
+    setDraggedCard(null);
   };
+
+  // Display Player's card count
+  const myPlayer = playerId && gameState
+    ? gameState[playerId] as PlayerState
+    : null;
 
   return (
     <div
@@ -399,6 +386,32 @@ function App() {
       >
         STRESS !
       </button>
+
+      {/* Player's Message Box */}
+      <div 
+        id="message_box"
+        style={{
+          position: "absolute",
+          top: "67%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+        }}
+      >
+        {message || " "}
+      </div>
+
+      {/* Display Player's Own Card Count */}
+      <div 
+        id="cardcount"
+        style={{
+          position: "absolute",
+          bottom: "1em",
+          right: "1em",
+          transform: "translate(-50%, -50%)",
+        }}
+      >
+        Your Deck: {myPlayer?.deck.length ?? "N/A"}
+      </div>
     </div>
   );
 }
