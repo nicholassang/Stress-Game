@@ -157,7 +157,7 @@ function App() {
 
   const myHand =
     playerId && gameState
-      ? (gameState[playerId] as PlayerState).deck.slice(0, 4)
+      ? (gameState[playerId] as PlayerState).deck.slice(0, 4).reverse()
       : [];
 
   const opponentHand =
@@ -171,7 +171,34 @@ function App() {
   console.log("Opponent: ", opponentHand)
   console.log("Central Piles: ", gameState?.center)
 
-  // Update Stress Btn if central deck piles are similiar
+  // Order Central Deck
+  const playerIds =
+    gameState
+      ? Object.keys(gameState)
+          .filter((id) => id !== "center")
+          .sort()
+      : [];
+
+  const amIFirstPlayer =
+    !!playerId && playerIds[0] === playerId;
+
+  const viewPiles =
+    gameState
+      ? amIFirstPlayer
+        ? {
+            left: gameState.center.pile1,
+            right: gameState.center.pile2,
+          }
+        : {
+            left: gameState.center.pile2,
+            right: gameState.center.pile1,
+          }
+      : {
+          left: [],
+          right: [],
+        };
+
+  // Update Stress Btn if central deck piles no. are similiar
   useEffect(() => {
     const pile1Top = gameState?.center?.pile1?.[0];
     const pile2Top = gameState?.center?.pile2?.[0];
@@ -239,38 +266,42 @@ function App() {
     </div>
   );
 
-  const handleDropOnPile = (pile: "pile1" | "pile2") => {
-  if (!draggedCard || !playerId || !gameState) return;
+  const handleDropOnPile = (viewPile: "left" | "right") => {
+    if (!draggedCard || !playerId || !gameState) return;
 
-  const topCard = gameState.center[pile][0];
+    const serverPile =
+      amIFirstPlayer
+        ? viewPile === "left" ? "pile1" : "pile2"
+        : viewPile === "left" ? "pile2" : "pile1";
 
-  // Allow drop if pile is empty
-  if (!topCard) {
-    sendPlay();
-    return;
-  }
+    const topCard = gameState.center[serverPile][0];
 
-  const draggedRank = parseInt(draggedCard.slice(0, -1));
-  const topRank = parseInt(topCard.slice(0, -1));
+    if (!topCard) {
+      sendPlay(serverPile);
+      return;
+    }
 
-  const isValid =
-    draggedRank === topRank + 1 ||
-    draggedRank === topRank - 1;
+    const draggedRank = parseInt(draggedCard.slice(0, -1));
+    const topRank = parseInt(topCard.slice(0, -1));
 
-  if (!isValid) return;
+    const isValid =
+      draggedRank === topRank + 1 ||
+      draggedRank === topRank - 1;
 
-  sendPlay();
+    if (!isValid) return;
 
-  function sendPlay() {
-    wsRef.current?.send(
-      JSON.stringify({
-        type: "PLAY_CARD",
-        card: draggedCard,
-        pile,
-      })
-    );
-    setDraggedCard(null);
-  }
+    sendPlay(serverPile);
+
+    function sendPlay(pile: "pile1" | "pile2") {
+      wsRef.current?.send(
+        JSON.stringify({
+          type: "PLAY_CARD",
+          card: draggedCard,
+          pile,
+        })
+      );
+      setDraggedCard(null);
+    }
   };
 
   return (
@@ -312,9 +343,8 @@ function App() {
           gap: "5em",
         }}
       >
-        {(["pile1", "pile2"] as const).map((pile) => {
-          const label =
-            gameState?.center[pile]?.[0] ?? "Empty";
+        {(["left", "right"] as const).map((pile) => {
+          const label = viewPiles[pile][0] ?? "Empty";
 
           return (
             <div
