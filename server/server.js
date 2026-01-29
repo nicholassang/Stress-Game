@@ -5,7 +5,7 @@ const { nanoid } = require("nanoid");
 
 const app = express();
 
-// Serve static in production (after `vite build`)
+// Serve static in production
 app.use(express.static("../client/vite-project/dist")); 
 
 const server = http.createServer(app);
@@ -132,7 +132,37 @@ wss.on("connection", (ws) => {
           type: "GAME_UPDATE",
           state: room.game_state,
         });
-
+        break;
+      }
+      case "STRESS": {
+        console.log("STRESS");
+        const room = rooms.get(ws.roomId);
+        if (!room) return;
+        const game = room.game_state;
+        // Find opponent id
+        const opponentId = Object.keys(game).find(
+          (id) => id !== ws.id && id !== "center"
+        );
+        if (!opponentId) return;
+        const opponent = game[opponentId];
+        if (!opponent) return;
+        // Collect all center cards
+        const collectedCards = [
+          ...game.center.pile1,
+          ...game.center.pile2,
+        ];
+        if (collectedCards.length === 0) return;
+        // Add to opponent's deck (bottom of deck)
+        opponent.deck.push(...collectedCards);
+        // Clear center piles
+        game.center.pile1.length = 0;
+        game.center.pile2.length = 0;
+        
+        // Broadcast updated state
+        broadcastRoom(ws.roomId, {
+          type: "GAME_UPDATE",
+          state: game,
+        });
         break;
       }
       default:

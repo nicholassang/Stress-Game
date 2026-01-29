@@ -34,9 +34,10 @@ function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const localCursorRef = useRef<HTMLDivElement | null>(null);
   const opponentsRef = useRef<Opponents>({}); // store latest positions
-  const opponentDivsRef = useRef<Record<string, HTMLDivElement>>({}); // map playerId -> div
+  const opponentDivsRef = useRef<Record<string, HTMLDivElement>>({}); // visual div (red)
   const lastSentRef = useRef<number>(0);
   const [findMatchDisabled, setFindMatchDisabled] = useState(false);
+  const [showStressBtn, setShowStressBtn] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const playerIdRef = useRef<string | null>(null);
@@ -87,8 +88,8 @@ function App() {
 
         case "GAME_UPDATE":
           console.log("GAME_UPDATE")
+          console.log("Updated Game_State: ", data.state)
           setGameState(data.state);
-          console.log(gameState)
           break;
 
         default:
@@ -170,6 +171,20 @@ function App() {
   console.log("Opponent: ", opponentHand)
   console.log("Central Piles: ", gameState?.center)
 
+  // Update Stress Btn if central deck piles are similiar
+  useEffect(() => {
+    const pile1Top = gameState?.center?.pile1?.[0];
+    const pile2Top = gameState?.center?.pile2?.[0];
+
+    const shouldShow =
+      !!pile1Top &&
+      !!pile2Top &&
+      pile1Top.slice(0, -1) === pile2Top.slice(0, -1);
+
+    setShowStressBtn(shouldShow);
+  }, [gameState]);
+
+
   const Card: React.FC<CardProps> = ({ 
     label,
     draggable,
@@ -189,6 +204,7 @@ function App() {
         borderRadius: "20px",
         cursor: draggable ? "grab" : "default",
         userSelect: "none",
+        color: "black"
       }}
     >
       {label}
@@ -223,20 +239,39 @@ function App() {
     </div>
   );
 
-const handleDropOnPile = (pile: "pile1" | "pile2") => {
+  const handleDropOnPile = (pile: "pile1" | "pile2") => {
   if (!draggedCard || !playerId || !gameState) return;
 
-  // Send move to server
-  wsRef.current?.send(
-    JSON.stringify({
-      type: "PLAY_CARD",
-      card: draggedCard,
-      pile,
-    })
-  );
+  const topCard = gameState.center[pile][0];
 
-  setDraggedCard(null);
-};
+  // Allow drop if pile is empty
+  if (!topCard) {
+    sendPlay();
+    return;
+  }
+
+  const draggedRank = parseInt(draggedCard.slice(0, -1));
+  const topRank = parseInt(topCard.slice(0, -1));
+
+  const isValid =
+    draggedRank === topRank + 1 ||
+    draggedRank === topRank - 1;
+
+  if (!isValid) return;
+
+  sendPlay();
+
+  function sendPlay() {
+    wsRef.current?.send(
+      JSON.stringify({
+        type: "PLAY_CARD",
+        card: draggedCard,
+        pile,
+      })
+    );
+    setDraggedCard(null);
+  }
+  };
 
   return (
     <div
@@ -314,6 +349,26 @@ const handleDropOnPile = (pile: "pile1" | "pile2") => {
           pointerEvents: "none",
         }}
       />
+
+      {/* Stress Btn */}
+      <button
+        id="stress_btn"
+        style={{
+          position: 'absolute',
+          top: "50%",
+          left: "50%",
+          zIndex: 100,
+          transform: "translate(-50%, -50%)",
+          visibility: showStressBtn ? "visible" : "hidden",
+        }}
+        onClick={() => {
+          console.log("STRESS !")
+          wsRef.current?.send(JSON.stringify({ type: "STRESS" }));
+          setShowStressBtn(false);
+        }}
+      >
+        STRESS !
+      </button>
     </div>
   );
 }
