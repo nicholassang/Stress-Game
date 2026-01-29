@@ -112,6 +112,29 @@ wss.on("connection", (ws) => {
         });
         break;
 
+      case "PLAY_CARD": {
+        const room = rooms.get(ws.roomId);
+        if (!room) return;
+
+        const player = room.game_state[ws.id];
+        if (!player) return;
+
+        const { card, pile } = data;
+
+        // Remove card from player's deck (or hand later)
+        player.deck = player.deck.filter((c) => c !== card);
+
+        // Add card to center pile
+        room.game_state.center[pile].unshift(card);
+
+        // Broadcast updated state
+        broadcastRoom(ws.roomId, {
+          type: "GAME_UPDATE",
+          state: room.game_state,
+        });
+
+        break;
+      }
       default:
         console.log("Unknown type:", data.type);
     }

@@ -40,6 +40,8 @@ function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const playerIdRef = useRef<string | null>(null);
+  const [draggedCard, setDraggedCard] = useState<string | null>(null);
+
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -59,7 +61,6 @@ function App() {
         case "MATCH_FOUND":
           console.log("Match found!", data.players);
           console.log("Room State", data.state);
-          setPlayerId(playerIdRef.current);
           setGameState(data.state);
           setFindMatchDisabled(true);
           break;
@@ -80,7 +81,14 @@ function App() {
         case "ASSIGN_ID":
           console.log("ASSIGN_ID")
           playerIdRef.current = data.playerId
+          setPlayerId(data.playerId);
           console.log(playerIdRef)
+          break;
+
+        case "GAME_UPDATE":
+          console.log("GAME_UPDATE")
+          setGameState(data.state);
+          console.log(gameState)
           break;
 
         default:
@@ -146,11 +154,6 @@ function App() {
     animate();
   }, []);
 
-  const centralDecks = [
-    gameState?.center.pile1[0] ?? "Empty", 
-    gameState?.center.pile2[0] ?? "Empty", 
-  ];
-
   const myHand =
     playerId && gameState
       ? (gameState[playerId] as PlayerState).deck.slice(0, 4)
@@ -165,6 +168,7 @@ function App() {
 
   console.log("My Hand: ", myHand)
   console.log("Opponent: ", opponentHand)
+  console.log("Central Piles: ", gameState?.center)
 
   const Card: React.FC<CardProps> = ({ 
     label,
@@ -191,7 +195,11 @@ function App() {
     </div>
   );
 
-  const renderRow = (items: string[], top: string) => (
+  const renderRow = (
+    items: string[], 
+    top: string,
+    draggable = false,
+  ) => (
     <div
       style={{
         display: "flex",
@@ -205,10 +213,30 @@ function App() {
       }}
     >
       {items.map((label, idx) => (
-        <Card key={idx} label={label} />
+        <Card 
+        key={idx} 
+        label={label} 
+        draggable={draggable}
+        onDragStart={() => setDraggedCard(label)}
+        />
       ))}
     </div>
   );
+
+const handleDropOnPile = (pile: "pile1" | "pile2") => {
+  if (!draggedCard || !playerId || !gameState) return;
+
+  // Send move to server
+  wsRef.current?.send(
+    JSON.stringify({
+      type: "PLAY_CARD",
+      card: draggedCard,
+      pile,
+    })
+  );
+
+  setDraggedCard(null);
+};
 
   return (
     <div
@@ -239,10 +267,34 @@ function App() {
       </button>
 
       {/* Central Decks */}
-      {renderRow(centralDecks, "50%")}
+      <div
+        style={{
+          display: "flex",
+          position: "absolute",
+          top: "50%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          gap: "5em",
+        }}
+      >
+        {(["pile1", "pile2"] as const).map((pile) => {
+          const label =
+            gameState?.center[pile]?.[0] ?? "Empty";
+
+          return (
+            <div
+              key={pile}
+              onDragOver={(e) => e.preventDefault()}
+              onDrop={() => handleDropOnPile(pile)}
+            >
+              <Card label={label} />
+            </div>
+          );
+        })}
+      </div>
 
       {/* Local Hand */}
-      {renderRow(myHand, "85%")}
+      {renderRow(myHand, "85%", true)}
 
       {/* Opponent Hand */}
       {renderRow(opponentHand, "15%")}
