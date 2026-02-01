@@ -54,6 +54,96 @@ wss.on("connection", (ws) => {
     try { data = JSON.parse(msg); } catch { return; }
 
     switch (data.type) {
+      case "HOST_ROOM": {
+        let roomId = "";
+        do {
+          roomId = generateRoomCode();
+        } while (rooms.has(roomId));
+
+        rooms.set(roomId, {
+          players: [ws],
+          playerOrder: [ws.id],
+          countdownActive: false,
+          game_state: null, 
+        });
+        ws.roomId = roomId;
+
+        ws.send(JSON.stringify({
+          type: "ROOM_HOSTED",
+          roomId
+        }));
+        break;
+      }
+
+      case "JOIN_ROOM": {
+        const roomId = data.roomId;
+        const room = rooms.get(roomId);
+
+        if (!room) {
+          ws.send(JSON.stringify({
+            type: "ERROR",
+            message: "Room not found"
+          }));
+          return;
+        }
+
+        if (room.players.length >= 2) {
+          ws.send(JSON.stringify({
+            type: "ERROR",
+            message: "Room full"
+          }));
+          return;
+        }
+
+        room.players.push(ws);
+        room.playerOrder.push(ws.id);
+        ws.roomId = roomId;
+
+        const deck = createDeck();
+        const playerADeck = deck.slice(0, 26);
+        const playerBDeck = deck.slice(26, 52);
+        const playerAHand = playerADeck.splice(0, 4);
+        const playerBHand = playerBDeck.splice(0, 4);
+
+        const game_state = {
+          [room.players[0].id]: {
+            deck: playerADeck,
+            hand: [
+              [playerAHand[0]],
+              [playerAHand[1]],
+              [playerAHand[2]],
+              [playerAHand[3]],
+            ],
+          },
+          [room.players[1].id]: {
+            deck: playerBDeck,
+            hand: [
+              [playerBHand[0]],
+              [playerBHand[1]],
+              [playerBHand[2]],
+              [playerBHand[3]],
+            ],
+          },
+          center: {
+            pile1: { cards: [], autoRefilled: false },
+            pile2: { cards: [], autoRefilled: false },
+          },
+        };
+
+        room.game_state = game_state;
+
+        await ensurePlayableState(room, roomId);
+
+        broadcastRoom(roomId, {
+          type: "MATCH_FOUND",
+          roomId,
+          players: room.playerOrder,
+          state: game_state,
+        });
+
+        await ensurePlayableState(room, roomId);
+        break;
+      }
       case "FIND_MATCH":
         if (waitingPlayers.length > 0) {
           const opponent = waitingPlayers.shift();
@@ -430,6 +520,15 @@ function drawFromDeckOrHand(player) {
     nonEmptyStacks[Math.floor(Math.random() * nonEmptyStacks.length)];
 
   return stack.shift();
+}
+
+function generateRoomCode(length = 5) {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let code = '';
+  for (let i = 0; i < length; i++) {
+    code += chars.charAt(Math.floor(Math.random() * chars.length));
+  }
+  return code;
 }
 
 server.listen(8080, () => {

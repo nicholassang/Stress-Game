@@ -79,6 +79,15 @@ function App() {
   } | null>(null);
   const [floatingCardPos, setFloatingCardPos] = useState<{ x: number; y: number } | null>(null);
   const floatingCardRef = useRef<HTMLDivElement | null>(null);
+  const [roomIdInput, setRoomIdInput] = useState("");
+  const [hostJoinGameDisabled, setHostJoinGameDisabled] = useState<boolean>(false);
+
+  // When the game starts, clear message baord
+  useEffect(() => {
+    if (gameState) {
+      setMessage(null);
+    }
+  }, [gameState]);
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -95,6 +104,15 @@ function App() {
       const data = JSON.parse(event.data);
 
       switch (data.type) {
+        case "ROOM_HOSTED":
+          console.log("Room hosted! ID:", data.roomId);
+          setMessage(`Room ID: ${data.roomId}. Waiting for opponent...`);
+          break;
+
+        case "ERROR":
+          setMessage(data.message);
+          break;
+
         case "MATCH_FOUND":
           console.log("Match found!", data.players);
           console.log("Room State", data.state);
@@ -299,7 +317,7 @@ function App() {
         border: "1px solid black",
         height: "9.8em",
         width: "7em",
-        background: "pink",
+        background: "white",
         borderRadius: "20px",
         cursor: draggable ? "grab" : "default",
         userSelect: "none",
@@ -464,6 +482,21 @@ function App() {
     setDraggedStackIndex(null);
   };
 
+  // Player's Message Box
+  const MessageBox = (
+    <div
+      id="message_box"
+      style={{
+        padding: "0.75rem 1.25rem",
+        borderRadius: "8px",
+        minWidth: "200px",
+        textAlign: "center",
+      }}
+    >
+      {message || ""}
+    </div>
+  );
+
   // Display Player's cards
   const myPlayer = playerId && gameState
     ? gameState[playerId] as PlayerState
@@ -485,45 +518,153 @@ function App() {
         width: "100vw",
         height: "100vh",
         overflow: "hidden",
-      }}
+        }}
     >
-      <button
-        id="find_match_btn"
-        style={{
-          position: 'absolute',
-          top: "50%",
-          left: "10%",
-          zIndex: 100,
-        }}
-        onClick={() => {
-          console.log("FIND_MATCH")
-          wsRef.current?.send(JSON.stringify({ type: "FIND_MATCH" }));
-          setFindMatchDisabled(true);
-        }}
-        disabled={findMatchDisabled}
-      >
-        Find Match
-      </button>
+
+      {/* Lobby / Landing UI */}
+      {!gameState && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            paddingTop: "10vh",
+            zIndex: 200,
+            pointerEvents: "auto",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "1.25rem",
+              padding: "2rem 3rem",
+              borderRadius: "12px",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+              minWidth: "320px",
+            }}
+          >
+            <h1 style={{ marginBottom: "0.5rem" }}>Stress Game</h1>
+
+            {/* Host Room */}
+            <button
+              style={{ 
+                padding: "0.9rem 2rem", 
+                fontSize: "1.1rem", 
+                width: "100%",
+              }}
+              onClick={() => {
+                setHostJoinGameDisabled(true)
+                wsRef.current?.send(JSON.stringify({ type: "HOST_ROOM" }));
+              }}
+              disabled = {hostJoinGameDisabled}
+            >
+              Host Room
+            </button>
+
+            {/* Join Room */}
+            <div style={{ display: "flex", gap: "0.5rem", width: "100%" }}>
+              <input
+                type="text"
+                value={roomIdInput}
+                onChange={(e) => setRoomIdInput(e.target.value)}
+                placeholder="Room ID"
+                style={{
+                  flex: 1,
+                  padding: "0.7rem",
+                  fontSize: "1rem",
+                }}
+                disabled = {hostJoinGameDisabled}
+              />
+              <button
+                style={{ padding: "0.7rem 1.2rem", fontSize: "1rem" }}
+                onClick={() => {
+                  setHostJoinGameDisabled(false)
+                  wsRef.current?.send(
+                    JSON.stringify({ type: "JOIN_ROOM", roomId: roomIdInput })
+                  );
+                }}
+                disabled = {hostJoinGameDisabled}
+              >
+                Join
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div
+              style={{
+                width: "100%",
+                height: "1px",
+                background: "#ddd",
+                margin: "0.5rem 0",
+              }}
+            />
+
+            {/* Find Match */}
+            <button
+              style={{
+                padding: "0.9rem 2rem",
+                fontSize: "1.1rem",
+                width: "100%",
+              }}
+              onClick={() => {
+                wsRef.current?.send(JSON.stringify({ type: "FIND_MATCH" }));
+                setHostJoinGameDisabled(false)
+                setFindMatchDisabled(true);
+                setMessage("Finding a match...")
+              }}
+              disabled={findMatchDisabled}
+            >
+              Find Match
+            </button>
+            {message && (
+              <div style={{ marginTop: "0.75rem", width: "100%" }}>
+                {MessageBox}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Player's Message Box */}
+      {gameState && (
+        <div
+          style={{
+            position: "absolute",
+            top: "67%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 100,
+          }}
+        >
+          {MessageBox}
+        </div>
+      )}
 
       {/* Central Decks */}
-      <div
-        style={{
-          display: "flex",
-          position: "absolute",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          gap: "5em",
-        }}
-      >
-        <div id="pile-left" onMouseOver={() => {}}>
-          <Card label={viewPiles.left[0] ?? "Empty"} />
-        </div>
+      {gameState && (
+        <div
+          style={{
+            display: "flex",
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            gap: "5em",
+          }}
+        >
+          <div id="pile-left" onMouseOver={() => {}}>
+            <Card label={viewPiles.left[0] ?? "Empty"} />
+          </div>
 
-        <div id="pile-right">
-          <Card label={viewPiles.right[0] ?? "Empty"} />
+          <div id="pile-right">
+            <Card label={viewPiles.right[0] ?? "Empty"} />
+          </div>
         </div>
-      </div>
+      )}
 
       {/* Local Hand */}
       {myHandStacks && (
@@ -579,19 +720,6 @@ function App() {
         STRESS !
       </button>
 
-      {/* Player's Message Box */}
-      <div 
-        id="message_box"
-        style={{
-          position: "absolute",
-          top: "67%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-        }}
-      >
-        {message || " "}
-      </div>
-
       {/* Player's Deck */}
       <div 
         id="playerDeck"
@@ -629,7 +757,7 @@ function App() {
             width: "7em",
             height: "9.8em",
             borderRadius: "20px",
-            background: "pink",
+            background: "white",
             border: "1px solid black",
             display: "flex",
             justifyContent: "center",
