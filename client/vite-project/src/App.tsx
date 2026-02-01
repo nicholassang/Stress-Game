@@ -15,6 +15,8 @@ interface CardStackProps {
   draggable?: boolean;
   onDragStart?: (stackIndex: number) => void;
   onDrop?: (stackIndex: number) => void;
+  onMouseDown?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  className?: string;
 }
 
 interface HandRowProps {
@@ -64,6 +66,12 @@ function App() {
   const playerIdRef = useRef<string | null>(null);
   const [draggedStackIndex, setDraggedStackIndex] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [draggingCard, setDraggingCard] = useState<{
+    label: string;
+    originStack: number;
+  } | null>(null);
+  const [floatingCardPos, setFloatingCardPos] = useState<{ x: number; y: number } | null>(null);
+  const floatingCardRef = useRef<HTMLDivElement | null>(null);
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -148,7 +156,13 @@ function App() {
       }
     };
 
-    window.addEventListener("mousemove", handleMouse);
+    window.addEventListener("mousemove", (e) => {
+      if (floatingCardRef.current) {
+        floatingCardRef.current.style.left = `${e.clientX}px`;
+        floatingCardRef.current.style.top = `${e.clientY}px`;
+      }
+      setFloatingCardPos({ x: e.clientX, y: e.clientY }); // optional, keeps state in sync
+    });
     return () => window.removeEventListener("mousemove", handleMouse);
   }, []);
 
@@ -186,6 +200,55 @@ function App() {
     };
     animate();
   }, []);
+
+  // Card Moving Animation
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (floatingCardRef.current) {
+        floatingCardRef.current.style.left = `${e.clientX}px`;
+        floatingCardRef.current.style.top = `${e.clientY}px`;
+      }
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => window.removeEventListener("mousemove", handleMouseMove);
+  }, []);
+
+  // "On Mouse" listener
+  useEffect(() => {
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!draggingCard || draggedStackIndex === null || !playerId) return;
+
+      const dropTarget = document.elementFromPoint(e.clientX, e.clientY);
+      if (!dropTarget) return;
+
+      // Check if dropped on central piles
+      const leftPile = document.getElementById("pile-left");
+      const rightPile = document.getElementById("pile-right");
+
+      if (leftPile && leftPile.contains(dropTarget)) {
+        handleDropOnPile("left");
+      } else if (rightPile && rightPile.contains(dropTarget)) {
+        handleDropOnPile("right");
+      } else {
+        // Check hand stacks
+        const handStacks = Array.from(
+          document.getElementsByClassName("hand-stack")
+        ) as HTMLElement[];
+
+        handStacks.forEach((stackEl, idx) => {
+          if (stackEl.contains(dropTarget)) {
+            handleDropOnHandStack(idx);
+          }
+        });
+      }
+
+      setDraggingCard(null);
+      setDraggedStackIndex(null);
+    };
+
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, [draggingCard, draggedStackIndex]);
 
   const myHandStacks =
     playerId && gameState
@@ -246,6 +309,8 @@ function App() {
     draggable = false,
     onDragStart,
     onDrop,
+    onMouseDown,
+    className,
   }) => {
     return (
       <div
@@ -253,6 +318,8 @@ function App() {
         onDragStart={() => onDragStart?.(stackIndex)}
         onDragOver={(e) => e.preventDefault()}
         onDrop={() => onDrop?.(stackIndex)}
+        onMouseDown={onMouseDown} 
+        className={className}     
         style={{
           position: "relative",
           width: "7em",
@@ -299,9 +366,16 @@ function App() {
             key={index}
             stack={stack}
             stackIndex={index}
-            draggable={isPlayer}
-            onDragStart={(fromIndex) => setDraggedStackIndex(fromIndex)}
-            onDrop={(toIndex) => handleDropOnHandStack(toIndex)}
+            draggable={false} 
+            onDragStart={undefined}
+            onMouseDown={(e) => {
+              if (isPlayer && stack.length > 0) {
+                setDraggedStackIndex(index);
+                setDraggingCard({ label: stack[0], originStack: index });
+                setFloatingCardPos({ x: e.clientX, y: e.clientY });
+              }
+            }}
+            className="hand-stack"
           />
         ))}
       </div>
@@ -354,7 +428,7 @@ function App() {
         id="find_match_btn"
         style={{
           position: 'absolute',
-          top: "10%",
+          top: "50%",
           left: "10%",
           zIndex: 100,
         }}
@@ -379,19 +453,13 @@ function App() {
           gap: "5em",
         }}
       >
-        {(["left", "right"] as const).map((pile) => {
-          const label = viewPiles[pile][0] ?? "Empty";
+        <div id="pile-left" onMouseOver={() => {}}>
+          <Card label={viewPiles.left[0] ?? "Empty"} />
+        </div>
 
-          return (
-            <div
-              key={pile}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => handleDropOnPile(pile)}
-            >
-              <Card label={label} />
-            </div>
-          );
-        })}
+        <div id="pile-right">
+          <Card label={viewPiles.right[0] ?? "Empty"} />
+        </div>
       </div>
 
       {/* Local Hand */}
@@ -461,6 +529,32 @@ function App() {
         {message || " "}
       </div>
 
+      {/* Player's Deck */}
+      <div 
+        id="playerDeck"
+        style={{
+          position: "absolute",
+          bottom: "3em",
+          right: "1em",
+          transform: "translate(-50%, -50%)",
+        }}
+      >
+        
+      </div>
+
+      {/* Opponents's Deck */}
+      <div 
+        id="opponentDeck"
+        style={{
+          position: "absolute",
+          bottom: "3em",
+          right: "1em",
+          transform: "translate(-50%, -50%)",
+        }}
+      >
+        
+      </div>
+
       {/* Display Player's Own Card Count */}
       <div 
         id="cardcount"
@@ -473,6 +567,33 @@ function App() {
       >
         Your Deck: {myPlayer?.deck.length ?? "N/A"}
       </div>
+
+      {/* Card Moving Animation */}
+      {draggingCard && floatingCardPos && (
+        <div
+          ref={floatingCardRef}
+          style={{
+            position: "absolute",
+            left: floatingCardPos.x,
+            top: floatingCardPos.y,
+            width: "7em",
+            height: "9.8em",
+            borderRadius: "20px",
+            background: "pink",
+            border: "1px solid black",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            pointerEvents: "none",
+            color: "black",
+            transform: "translate(-50%, -50%)",
+            zIndex: 1000,
+          }}
+        >
+          {draggingCard.label}
+        </div>
+      )}
+
     </div>
   );
 }

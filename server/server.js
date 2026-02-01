@@ -405,16 +405,17 @@ function broadcastCountdown(roomId, seconds) {
 }
 
 function computeStressAvailable(game) {
-  const pile1Top = game.center.pile1.cards[0];
-  const pile2Top = game.center.pile2.cards[0];
+  const pile1 = game.center.pile1;
+  const pile2 = game.center.pile2;
 
-  return (
-    pile1Top &&
-    pile2Top &&
-    pile1Top.slice(0, -1) === pile2Top.slice(0, -1) &&
-    !game.center.pile1.autoRefilled &&
-    !game.center.pile2.autoRefilled
-  );
+  if (pile1.autoRefilled || pile2.autoRefilled) return false; 
+
+  const pile1Top = pile1.cards[0];
+  const pile2Top = pile2.cards[0];
+
+  if (!pile1Top || !pile2Top) return false;
+
+  return pile1Top.slice(0, -1) === pile2Top.slice(0, -1);
 }
 
 function drawFromDeckOrHand(player) {
