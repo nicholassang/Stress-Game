@@ -1,6 +1,30 @@
 // App.tsx
 import { useState, useEffect, useRef } from "react";
 
+type CardLabel = string;
+type CardStackType = CardLabel[];
+
+interface PlayerState {
+  deck: string[];
+  hand: [CardStackType, CardStackType, CardStackType, CardStackType];
+}
+
+interface CardStackProps {
+  stack: string[];
+  stackIndex: number;
+  draggable?: boolean;
+  onDragStart?: (stackIndex: number) => void;
+  onDrop?: (stackIndex: number) => void;
+  onMouseDown?: (e: React.MouseEvent<HTMLDivElement>) => void;
+  className?: string;
+}
+
+interface HandRowProps {
+  hand: PlayerState["hand"];
+  top: string;
+  isPlayer: boolean;
+}
+
 interface CursorPosition {
   x: number;
   y: number;
@@ -10,14 +34,16 @@ interface Opponents {
   [id: string]: CursorPosition;
 }
 
-interface PlayerState {
-  deck: string[];
-  hand: string[];
-}
-
 interface Pile {
   cards: string[];
   autoRefilled: boolean;
+}
+
+interface DeckPileProps {
+  count: number;      
+  label?: string;   
+  mirrored?: boolean;
+  showCount?: boolean; 
 }
 
 interface GameState {
@@ -40,13 +66,59 @@ function App() {
   const opponentsRef = useRef<Opponents>({}); // store latest positions
   const opponentDivsRef = useRef<Record<string, HTMLDivElement>>({}); // visual div (red)
   const lastSentRef = useRef<number>(0);
-  const [findMatchDisabled, setFindMatchDisabled] = useState(false);
   const [showStressBtn, setShowStressBtn] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const playerIdRef = useRef<string | null>(null);
-  const [draggedCard, setDraggedCard] = useState<string | null>(null);
+  const [draggedStackIndex, setDraggedStackIndex] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [draggingCard, setDraggingCard] = useState<{
+    label: string;
+    originStack: number;
+  } | null>(null);
+  const [floatingCardPos, setFloatingCardPos] = useState<{ x: number; y: number } | null>(null);
+  const floatingCardRef = useRef<HTMLDivElement | null>(null);
+  const [roomIdInput, setRoomIdInput] = useState("");
+  const [hostJoinGameDisabled, setHostJoinGameDisabled] = useState<boolean>(false);
+  const [lobbyMode, setLobbyMode] = useState<
+    "idle" | "hosting" | "finding"
+  >("idle");
+  const [remainingTime, setRemainingTime] = useState<number | null>(6000);
+  const [winner, setWinner] = useState<string | null>(null);
+  const [gameEnded, setGameEnded] = useState(false);
+
+  // When the game starts, clear message baord
+  useEffect(() => {
+    if (gameState) {
+      setMessage("")
+      setLobbyMode("idle");
+      setHostJoinGameDisabled(false);
+    }
+  }, [gameState]);
+
+  // Prevent zoom
+  useEffect(() => {
+    const preventZoom = (e: WheelEvent | KeyboardEvent) => {
+      // Ctrl + wheel
+      if ('ctrlKey' in e && e.ctrlKey) {
+        e.preventDefault();
+      }
+
+      // Ctrl + +/- or Ctrl + 0
+      if ('key' in e && e.ctrlKey) {
+        const keys = ['+', '-', '=', '0'];
+        if (keys.includes(e.key)) e.preventDefault();
+      }
+    };
+
+    window.addEventListener('wheel', preventZoom as any, { passive: false });
+    window.addEventListener('keydown', preventZoom as any, { passive: false });
+
+    return () => {
+      window.removeEventListener('wheel', preventZoom as any);
+      window.removeEventListener('keydown', preventZoom as any);
+    };
+  }, []);
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -55,7 +127,7 @@ function App() {
 
     // Connection Begin
     ws.onopen = () => {
-      console.log("✅ Connected to server");
+      console.log("Connected to server");
     };
 
     // From Server
@@ -63,11 +135,23 @@ function App() {
       const data = JSON.parse(event.data);
 
       switch (data.type) {
+        case "ROOM_HOSTED":
+          console.log("Room hosted! ID:", data.roomId);
+          setMessage(`Room ID: ${data.roomId}. Waiting for opponent...`);
+          break;
+
+        case "ERROR":
+          setMessage(data.message);
+          break;
+
+        case "TIME_UPDATE":
+          setRemainingTime(data.remainingTime);
+          break;
+
         case "MATCH_FOUND":
           console.log("Match found!", data.players);
           console.log("Room State", data.state);
           setGameState(data.state);
-          setFindMatchDisabled(true);
           break;
 
         case "MOUSE_UPDATE":
@@ -76,7 +160,6 @@ function App() {
 
         case "OPPONENT_DISCONNECTED":
           console.log("OPPONENT DISCONNECTED")
-          setFindMatchDisabled(false);
           const div = opponentDivsRef.current[data.playerId];
           if (div && div.parentNode) div.parentNode.removeChild(div);
           delete opponentsRef.current[data.playerId];
@@ -95,10 +178,31 @@ function App() {
           console.log("Updated Game_State: ", data.state)
           setMessage("");
           setGameState(data.state);
+          setShowStressBtn(!!data.stressAvailable);
+          if (!gameEnded) {
+            setMessage("");
+          }
           break;
 
         case "COUNTDOWN":
           setMessage(data.message);
+          break;
+
+        case "GAME_END":
+          const serverWinner: string | null = data.winner;
+          setGameEnded(true);
+
+          const currentPlayerId = playerIdRef.current; 
+          if (serverWinner === null) {
+            setMessage("It's a tie!");
+          } else if (currentPlayerId && serverWinner === currentPlayerId) {
+            setMessage("You won!");
+          } else {
+            setMessage("You lost!");
+          }
+
+          setWinner(serverWinner);
+          break;
           break;
 
         default:
@@ -111,27 +215,36 @@ function App() {
 
   // Track local mouse
   useEffect(() => {
-    const handleMouse = (e: MouseEvent) => {
-      // Update local cursor instantly
+    const handleMouseMove = (e: MouseEvent) => {
+      // Move local cursor
       if (localCursorRef.current) {
         localCursorRef.current.style.left = `${e.clientX}px`;
         localCursorRef.current.style.top = `${e.clientY}px`;
+      }
+
+      // Move floating card
+      if (floatingCardRef.current) {
+        floatingCardRef.current.style.left = `${e.clientX}px`;
+        floatingCardRef.current.style.top = `${e.clientY}px`;
       }
 
       // Throttle WS messages (~20Hz)
       const now = Date.now();
       if (now - lastSentRef.current > 50) {
         lastSentRef.current = now;
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current?.readyState === WebSocket.OPEN &&
           wsRef.current.send(
-            JSON.stringify({ type: "MOUSE_MOVE", x: e.clientX, y: e.clientY })
+            JSON.stringify({
+              type: "MOUSE_MOVE",
+              x: e.clientX,
+              y: e.clientY,
+            })
           );
-        }
       }
     };
 
-    window.addEventListener("mousemove", handleMouse);
-    return () => window.removeEventListener("mousemove", handleMouse);
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
 
   // requestAnimationFrame loop to render opponent cursors
@@ -169,20 +282,69 @@ function App() {
     animate();
   }, []);
 
-  const myHand =
+  // Card Moving Animation
+  useEffect(() => {
+    const handleMouseMove = (e: MouseEvent) => {
+      if (floatingCardRef.current) {
+        floatingCardRef.current.style.left = `${e.clientX}px`;
+        floatingCardRef.current.style.top = `${e.clientY}px`;
+      }
+    };
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => window.removeEventListener("mousemove", handleMouseMove);
+  }, []);
+
+  // "On Mouse" listener
+  useEffect(() => {
+    const handleMouseUp = (e: MouseEvent) => {
+      if (!draggingCard || draggedStackIndex === null || !playerId) return;
+
+      const dropTarget = document.elementFromPoint(e.clientX, e.clientY);
+      if (!dropTarget) return;
+
+      // Check if dropped on central piles
+      const leftPile = document.getElementById("pile-left");
+      const rightPile = document.getElementById("pile-right");
+
+      if (leftPile && leftPile.contains(dropTarget)) {
+        handleDropOnPile("left");
+      } else if (rightPile && rightPile.contains(dropTarget)) {
+        handleDropOnPile("right");
+      } else {
+        // Check hand stacks
+        const handStacks = Array.from(
+          document.getElementsByClassName("hand-stack")
+        ) as HTMLElement[];
+
+        handStacks.forEach((stackEl, idx) => {
+          if (stackEl.contains(dropTarget)) {
+            handleDropOnHandStack(idx);
+          }
+        });
+      }
+
+      setDraggingCard(null);
+      setDraggedStackIndex(null);
+    };
+
+    window.addEventListener("mouseup", handleMouseUp);
+    return () => window.removeEventListener("mouseup", handleMouseUp);
+  }, [draggingCard, draggedStackIndex]);
+
+  const myHandStacks =
     playerId && gameState
       ? (gameState[playerId] as PlayerState).hand
-      : [];
+      : null;
 
-  const opponentHand =
+  const opponentHandStacks =
     playerId && gameState
       ? Object.keys(gameState)
-          .filter((id) => id !== "center" && id !== playerId)
-          .map((id) => (gameState[id] as PlayerState).hand)[0] ?? []
-      : [];
+          .filter(id => id !== "center" && id !== playerId)
+          .map(id => (gameState[id] as PlayerState).hand)[0]
+      : null;
 
-  console.log("My Hand: ", myHand)
-  console.log("Opponent: ", opponentHand)
+  console.log("My Hand: ", myHandStacks)
+  console.log("Opponent: ", opponentHandStacks)
   console.log("Central Piles: ", gameState?.center)
 
   // Order Central Deck
@@ -196,35 +358,13 @@ function App() {
         right: [],
       };
 
-  // Update Stress Btn if central deck piles no. are similiar
-  useEffect(() => {
-    const pile1 = gameState?.center?.pile1;
-    const pile2 = gameState?.center?.pile2;
-
-    if (!pile1?.cards.length || !pile2?.cards.length) {
-      setShowStressBtn(false);
-      return;
-    }
-
-    const pile1Top = pile1.cards[0];
-    const pile2Top = pile2.cards[0];
-
-    const shouldShow =
-      pile1Top.slice(0, -1) === pile2Top.slice(0, -1) &&
-      !pile1.autoRefilled &&
-      !pile2.autoRefilled;
-
-    setShowStressBtn(shouldShow);
-  }, [gameState]);
-
-
   const Card: React.FC<CardProps> = ({ 
     label,
     draggable,
     onDragStart
   }) => (
     <div
-      draggable={draggable}
+      draggable={draggable ?? false}
       onDragStart={onDragStart}
       style={{
         display: "flex",
@@ -233,63 +373,219 @@ function App() {
         border: "1px solid black",
         height: "9.8em",
         width: "7em",
-        background: "pink",
+        background: "white",
         borderRadius: "20px",
         cursor: draggable ? "grab" : "default",
         userSelect: "none",
-        color: "black"
+        color: "black",
+        fontSize: "1em",
+      }}
+      onMouseDown={(e) => {
+        if (winner) return;
+        e.preventDefault()
       }}
     >
       {label}
     </div>
   );
 
-  const renderRow = (
-    items: string[], 
-    top: string,
+  const DeckPile: React.FC<DeckPileProps> = ({ count, label, mirrored = false, showCount = true }) => {
+    const maxVisible = 10; 
+    const visibleCount = Math.min(count, maxVisible);
+
+    return (
+      <div style={{ position: "relative", width: "7em", height: "11em" }}>
+        {[...Array(visibleCount)].map((_, i) => (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              top: mirrored ? i * 2 : -i * 2,
+              left: mirrored ? -i * 1.5 : i * 1.5,
+              width: "7em",
+              height: "9.8em",
+              borderRadius: "20px",
+              background: "gray",
+              border: "1px solid black",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              color: "white",
+              fontWeight: "bold",
+              zIndex: i,
+              userSelect: "none",
+            }}
+          >
+            {i === 0 && label ? label : ""}
+          </div>
+        ))}
+        {showCount && count > maxVisible && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: "-1.5em",
+              left: "50%",
+              transform: "translateX(-50%)",
+              fontSize: "0.8em",
+              fontWeight: "bold",
+              userSelect: 'none'
+            }}
+          >
+            {count} cards
+          </div>
+        )}
+      </div>
+    );
+  };
+
+  const CardStack: React.FC<CardStackProps> = ({
+    stack,
+    stackIndex,
     draggable = false,
-  ) => (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "row",
-        position: "absolute",
-        top,
-        left: "50%",
-        transform: "translate(-50%, -50%)",
-        background: "orange",
-        gap: "5em",
-      }}
-    >
-      {items.map((label, idx) => (
-        <Card 
-        key={idx} 
-        label={label} 
-        draggable={draggable}
-        onDragStart={() => setDraggedCard(label)}
-        />
-      ))}
-    </div>
-  );
+    onDragStart,
+    onDrop,
+    onMouseDown,
+    className,
+  }) => {
+    return (
+      <div
+        draggable={false}
+        onDragStart={() => onDragStart?.(stackIndex)}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={() => onDrop?.(stackIndex)}
+        onMouseDown={(e) => {
+          if (winner) return;
+          onMouseDown?.(e);
+          e.preventDefault(); 
+        }}
+        className={className}     
+        style={{
+          position: "relative",
+          width: "7em",
+          height: "11em",
+          cursor: draggable ? "grab" : "default",
+          userSelect: "none",
+        }}
+      >
+        {stack.map((card, index) => (
+          <div
+            key={`${card}-${index}`}
+            style={{
+              position: "absolute",
+              top: -index * 3,
+              left: index * 2,
+              zIndex: index,
+            }}
+          >
+            <Card label={card} />
+          </div>
+        ))}
+      </div>
+    );
+  };
+
+
+  const HandRow: React.FC<HandRowProps> = ({
+    hand,
+    top,
+    isPlayer,
+  }) => {
+    return (
+      <div
+        style={{
+          display: "flex",
+          position: "absolute",
+          top,
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          gap: "5em",
+        }}
+      >
+        {hand.map((stack, index) => (
+          <CardStack
+            key={index}
+            stack={stack}
+            stackIndex={index}
+            draggable={false} 
+            onDragStart={undefined}
+            onMouseDown={(e) => {
+              if (winner) return;
+              if (isPlayer && stack.length > 0) {
+                setDraggedStackIndex(index);
+                setDraggingCard({ label: stack[0], originStack: index });
+                setFloatingCardPos({ x: e.clientX, y: e.clientY });
+              }
+            }}
+            className="hand-stack"
+          />
+        ))}
+      </div>
+    );
+  };
 
   const handleDropOnPile = (viewPile: "left" | "right") => {
-    if (!draggedCard || !playerId) return;
+    if (draggedStackIndex === null || !playerId) return;
 
-    const serverPile = viewPile === "left" ? "pile1" : "pile2";
+    const pileName = viewPile === "left" ? "pile1" : "pile2";
 
     wsRef.current?.send(JSON.stringify({
       type: "PLAY_CARD",
-      card: draggedCard,
-      pile: serverPile
+      fromStack: draggedStackIndex,
+      pile: pileName
     }));
 
-    setDraggedCard(null);
+    setDraggedStackIndex(null); 
   };
 
-  // Display Player's card count
+  const handleDropOnHandStack = (toStackIndex: number) => {
+    if (draggedStackIndex === null || !playerId) return;
+    if (draggedStackIndex === toStackIndex) return;
+
+    wsRef.current?.send(JSON.stringify({
+      type: "MERGE_HAND_STACK",
+      fromStack: draggedStackIndex,
+      toStack: toStackIndex
+    }));
+
+    setDraggedStackIndex(null);
+  };
+
+  // Player's Message Box
+  const MessageBox = (
+    <div
+      id="message_box"
+      style={{
+        padding: "0.75rem 1.25rem",
+        borderRadius: "8px",
+        minWidth: "200px",
+        textAlign: "center",
+        userSelect: 'none'
+      }}
+    >
+      {message || ""}
+    </div>
+  );
+
+  // Util function for timer
+  const formatTime = (ms: number) => {
+    const totalSeconds = Math.max(Math.floor(ms / 1000), 0);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2,'0')}`;
+  };
+
+  // Display Player's cards
   const myPlayer = playerId && gameState
     ? gameState[playerId] as PlayerState
     : null;
+
+  // Display Player's cards
+  const opponentPlayer =
+    playerId && gameState
+      ? Object.keys(gameState)
+          .filter(id => id !== "center" && id !== playerId)
+          .map(id => gameState[id] as PlayerState)[0]
+      : null;
 
   return (
     <div
@@ -299,57 +595,215 @@ function App() {
         width: "100vw",
         height: "100vh",
         overflow: "hidden",
-      }}
+        }}
     >
-      <button
-        id="find_match_btn"
-        style={{
-          position: 'absolute',
-          top: "10%",
-          left: "10%",
-          zIndex: 100,
-        }}
-        onClick={() => {
-          console.log("FIND_MATCH")
-          wsRef.current?.send(JSON.stringify({ type: "FIND_MATCH" }));
-          setFindMatchDisabled(true);
-        }}
-        disabled={findMatchDisabled}
-      >
-        Find Match
-      </button>
+
+      {/* Lobby / Landing UI */}
+      {!gameState && (
+        <div
+          style={{
+            position: "absolute",
+            inset: 0,
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            paddingTop: "10vh",
+            zIndex: 200,
+            pointerEvents: "auto",
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              gap: "1.25rem",
+              padding: "2rem 3rem",
+              borderRadius: "12px",
+              boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+              minWidth: "320px",
+            }}
+          >
+            <h1 style={{ marginBottom: "0.5rem" }}>Stress Game</h1>
+
+            {/* Host Room */}
+            <button
+              style={{ padding: "0.9rem 2rem", fontSize: "1.1rem", width: "100%" }}
+              onClick={() => {
+                wsRef.current?.send(JSON.stringify({ type: "HOST_ROOM" }));
+                setLobbyMode("hosting");
+                setHostJoinGameDisabled(true);
+              }}
+              disabled={lobbyMode !== "idle"}
+            >
+              Host Room
+            </button>
+
+            {/* Join Room */}
+            <div style={{ display: "flex", gap: "0.5rem", width: "100%" }}>
+              <input
+                type="text"
+                value={roomIdInput}
+                onChange={(e) => setRoomIdInput(e.target.value)}
+                placeholder="Room ID"
+                style={{
+                  flex: 1,
+                  padding: "0.7rem",
+                  fontSize: "1rem",
+                }}
+                disabled = {hostJoinGameDisabled}
+              />
+              <button
+                style={{ padding: "0.7rem 1.2rem", fontSize: "1rem" }}
+                onClick={() => {
+                  setHostJoinGameDisabled(false)
+                  wsRef.current?.send(
+                    JSON.stringify({ type: "JOIN_ROOM", roomId: roomIdInput })
+                  );
+                }}
+                disabled = {hostJoinGameDisabled}
+              >
+                Join
+              </button>
+            </div>
+
+            {/* Divider */}
+            <div
+              style={{
+                width: "100%",
+                height: "1px",
+                background: "#ddd",
+                margin: "0.5rem 0",
+              }}
+            />
+
+            {/* Find Match */}
+            <button
+              style={{
+                padding: "0.9rem 2rem",
+                fontSize: "1.1rem",
+                width: "100%",
+              }}
+              onClick={() => {
+                wsRef.current?.send(JSON.stringify({ type: "FIND_MATCH" }));
+                setLobbyMode("finding");
+                setMessage("Finding a match...");
+              }}
+              disabled={lobbyMode !== "idle"}
+            >
+              Find Match
+            </button>
+
+            {/* Cancel Button */}
+            {lobbyMode === "hosting" && (
+              <button
+                style={{
+                  padding: "0.7rem 1.5rem",
+                  fontSize: "1rem",
+                  width: "100%",
+                }}
+                onClick={() => {
+                  wsRef.current?.send(JSON.stringify({ type: "CANCEL_HOST" }));
+                  setLobbyMode("idle");
+                  setHostJoinGameDisabled(false);
+                  setMessage(null);
+                }}
+              >
+                Cancel Hosting
+              </button>
+            )}
+
+            {lobbyMode === "finding" && (
+              <button
+                style={{
+                  padding: "0.7rem 1.5rem",
+                  fontSize: "1rem",
+                  width: "100%",
+                }}
+                onClick={() => {
+                  wsRef.current?.send(JSON.stringify({ type: "CANCEL_FIND_MATCH" }));
+                  setLobbyMode("idle");
+                  setMessage(null);
+                }}
+              >
+                Cancel Matchmaking
+              </button>
+            )}
+
+            {/* Landing Page Message Box */}
+            {message && (
+              <div style={{ marginTop: "0.75rem", width: "100%" }}>
+                {MessageBox}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Player's Message Box */}
+      {gameState && (
+        <div
+          style={{
+            position: "absolute",
+            top: "67%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            zIndex: 100,
+          }}
+        >
+          {MessageBox}
+        </div>
+      )}
 
       {/* Central Decks */}
-      <div
-        style={{
-          display: "flex",
-          position: "absolute",
-          top: "50%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          gap: "5em",
-        }}
-      >
-        {(["left", "right"] as const).map((pile) => {
-          const label = viewPiles[pile][0] ?? "Empty";
+      {gameState && (
+        <div
+          style={{
+            position: "absolute",
+            top: "50%",
+            left: "50%",
+            transform: "translate(-50%, -50%)",
+            display: "flex",
+            gap: "4.5em",
+            padding: "2.6em 3.4em",
+            background: "radial-gradient(circle at center, #b08968 0%, #7a4a2e 70%)",
+            borderRadius: "999px", 
+            border: "4px solid #5a3218",
+            boxShadow: `
+              inset 0 6px 12px rgba(0,0,0,0.35),
+              0 10px 25px rgba(0,0,0,0.4)
+            `,
 
-          return (
-            <div
-              key={pile}
-              onDragOver={(e) => e.preventDefault()}
-              onDrop={() => handleDropOnPile(pile)}
-            >
-              <Card label={label} />
-            </div>
-          );
-        })}
-      </div>
+            zIndex: 10,
+          }}
+        >
+          <div id="pile-left" onMouseOver={() => {}}>
+            <Card label={viewPiles.left[0] ?? "Empty"} />
+          </div>
+
+          <div id="pile-right">
+            <Card label={viewPiles.right[0] ?? "Empty"} />
+          </div>
+        </div>
+      )}
 
       {/* Local Hand */}
-      {renderRow(myHand, "85%", true)}
+      {myHandStacks && (
+        <HandRow
+          hand={myHandStacks}
+          top="88%"
+          isPlayer={true}
+        />
+      )}
 
       {/* Opponent Hand */}
-      {renderRow(opponentHand, "15%")}
+      {opponentHandStacks && (
+        <HandRow
+          hand={opponentHandStacks}
+          top="15%"
+          isPlayer={false}
+        />
+      )}
 
       {/* Local cursor */}
       <div
@@ -387,31 +841,101 @@ function App() {
         STRESS !
       </button>
 
-      {/* Player's Message Box */}
+      {/* Player's Deck */}
       <div 
-        id="message_box"
+        id="playerDeck"
         style={{
           position: "absolute",
-          top: "67%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
+          bottom: "20%",
+          right: "9%",
+          transform: "translate(50%, 50%)",
         }}
       >
-        {message || " "}
+        <DeckPile count={myPlayer?.deck.length ?? 0} showCount={true} />
       </div>
 
-      {/* Display Player's Own Card Count */}
+      {/* Opponent's Deck */}
       <div 
-        id="cardcount"
+        id="opponentDeck"
         style={{
           position: "absolute",
-          bottom: "1em",
-          right: "1em",
-          transform: "translate(-50%, -50%)",
+          top: "20%",
+          left: "9%",
+          transform: "translate(-50%, -50%) rotate(180deg)",
         }}
       >
-        Your Deck: {myPlayer?.deck.length ?? "N/A"}
+        <DeckPile count={opponentPlayer?.deck.length ?? 0} showCount={false} />
       </div>
+
+      {/* Card Moving Animation */}
+      {draggingCard && floatingCardPos && (
+        <div
+          ref={floatingCardRef}
+          style={{
+            position: "absolute",
+            left: floatingCardPos.x,
+            top: floatingCardPos.y,
+            width: "7em",
+            height: "9.8em",
+            borderRadius: "20px",
+            background: "white",
+            border: "1px solid black",
+            display: "flex",
+            justifyContent: "center",
+            alignItems: "center",
+            pointerEvents: "none",
+            color: "black",
+            transform: "translate(-50%, -50%)",
+            zIndex: 1000,
+          }}
+        >
+          {draggingCard.label}
+        </div>
+      )}
+
+    {/* 10min Timer */}
+    {remainingTime !== null && (
+      <div
+        style={{
+          position: "absolute",
+          top: "10%",
+          left: "90%",
+          transform: "translateX(-50%)",
+          fontSize: "2rem",
+          fontWeight: "bold",
+          color: "#fff",
+          textShadow: "0 0 5px black",
+          zIndex: 200,
+        }}
+      >
+        {formatTime(remainingTime)}
+      </div>
+    )}
+
+    {/* Game End Screen */}
+    {gameEnded && (
+      <div
+        style={{
+          position: "absolute",
+          top: "40%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          background: "rgba(80, 79, 79, 0.7)",
+          color: "white",
+          padding: "2rem 3rem",
+          borderRadius: "12px",
+          fontSize: "2rem",
+          fontWeight: "bold",
+          zIndex: 300,
+          textAlign: "center",
+        }}
+      >
+        {message}
+        <div style={{ marginTop: "1rem", fontSize: "1rem" }}>
+          Refresh page or go back to lobby to play again
+        </div>
+      </div>
+    )}
     </div>
   );
 }
