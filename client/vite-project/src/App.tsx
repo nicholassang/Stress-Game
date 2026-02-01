@@ -85,6 +85,7 @@ function App() {
   >("idle");
   const [remainingTime, setRemainingTime] = useState<number | null>(6000);
   const [winner, setWinner] = useState<string | null>(null);
+  const [gameEnded, setGameEnded] = useState(false);
 
   // When the game starts, clear message baord
   useEffect(() => {
@@ -178,22 +179,31 @@ function App() {
           setMessage("");
           setGameState(data.state);
           setShowStressBtn(!!data.stressAvailable);
+          if (!gameEnded) {
+            setMessage("");
+          }
           break;
 
         case "COUNTDOWN":
           setMessage(data.message);
           break;
 
-      case "GAME_END":
-        setWinner(data.winner); 
-        setMessage(
-          data.winner
-            ? data.winner === playerId
-              ? "You won!"
-              : "You lost!"
-            : "It's a tie!"
-        );
-        break;
+        case "GAME_END":
+          const serverWinner: string | null = data.winner;
+          setGameEnded(true);
+
+          const currentPlayerId = playerIdRef.current; 
+          if (serverWinner === null) {
+            setMessage("It's a tie!");
+          } else if (currentPlayerId && serverWinner === currentPlayerId) {
+            setMessage("You won!");
+          } else {
+            setMessage("You lost!");
+          }
+
+          setWinner(serverWinner);
+          break;
+          break;
 
         default:
           break;
@@ -903,7 +913,7 @@ function App() {
     )}
 
     {/* Game End Screen */}
-    {winner && (
+    {gameEnded && (
       <div
         style={{
           position: "absolute",
