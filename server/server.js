@@ -131,7 +131,6 @@ wss.on("connection", (ws) => {
           }
         });
         break;
-
       case "PLAY_CARD": {
         const room = rooms.get(ws.roomId);
         if (!room) return;
@@ -147,10 +146,10 @@ wss.on("connection", (ws) => {
           return; 
         }
 
-        // Remove card from hand
+        // Find the stack containing the dragged card at the top
         for (const stack of player.hand) {
-          if (stack[0] === card) {
-            stack.shift(); // remove top card
+          if (stack[stack.length - 1] === card) {
+            stack.pop(); // remove the top card
             break;
           }
         }
@@ -172,6 +171,36 @@ wss.on("connection", (ws) => {
 
         await ensurePlayableState(room, ws.roomId);
 
+        break;
+      }
+      case "MERGE_HAND_STACK": {
+        const room = rooms.get(ws.roomId);
+        if (!room) return;
+
+        const { fromStack, toStack } = data;
+        const player = room.game_state[ws.id];
+        if (!player) return;
+
+        const draggedCard = player.hand[fromStack][0];
+        const targetCard = player.hand[toStack][0];
+
+        if (!draggedCard || !targetCard) return;
+
+        if (draggedCard.slice(0,-1) === targetCard.slice(0,-1)) {
+          // Merge card
+          player.hand[toStack].unshift(draggedCard);
+          player.hand[fromStack].shift();
+
+          // Refill empty stack
+          if (player.hand[fromStack].length === 0 && player.deck.length > 0) {
+            player.hand[fromStack].push(player.deck.shift());
+          }
+
+          broadcastRoom(ws.roomId, {
+            type: "GAME_UPDATE",
+            state: room.game_state
+          });
+        }
         break;
       }
       case "STRESS": {
@@ -208,6 +237,8 @@ wss.on("connection", (ws) => {
             }
           }
         }
+
+        await ensurePlayableState(room, ws.roomId);
 
         // Broadcast updated state
         broadcastRoom(ws.roomId, {

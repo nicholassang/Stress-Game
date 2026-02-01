@@ -13,6 +13,7 @@ interface CardStackProps {
   stack: string[];
   draggableTop?: boolean;
   onDragTop?: (card: string) => void;
+  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
 }
 
 interface HandRowProps {
@@ -264,6 +265,7 @@ function App() {
     stack,
     draggableTop = false,
     onDragTop,
+    onDrop,
   }) => {
     return (
       <div
@@ -272,6 +274,8 @@ function App() {
           width: "7em",
           height: "11em",
         }}
+        onDragOver={e => e.preventDefault()}
+        onDrop={onDrop}
       >
         {stack.map((card, index) => {
           const isTop = index === stack.length - 1;
@@ -280,8 +284,9 @@ function App() {
             <div
               key={`${card}-${index}`}
               style={{
-                top: index * 3,   // vertical offset for stacking
-                left: index * 2,  // slight horizontal offset
+                position: "absolute",
+                top: index * 5,  
+                left: index * 5,  
                 zIndex: index,
               }}
             >
@@ -325,6 +330,7 @@ function App() {
             stack={stack}
             draggableTop={isPlayer}
             onDragTop={onDragCard}
+            onDrop={() => handleDropOnHandStack(index)}
           />
         ))}
       </div>
@@ -332,14 +338,30 @@ function App() {
   };
 
   const handleDropOnPile = (viewPile: "left" | "right") => {
-    if (!draggedCard || !playerId) return;
+    if (!draggedCard || !playerId || !myPlayer) return;
 
-    const serverPile = viewPile === "left" ? "pile1" : "pile2";
+    const pileName = viewPile === "left" ? "pile1" : "pile2";
 
     wsRef.current?.send(JSON.stringify({
       type: "PLAY_CARD",
       card: draggedCard,
-      pile: serverPile
+      pile: pileName
+    }));
+
+    setDraggedCard(null); // clear local drag state
+  };
+
+  const handleDropOnHandStack = (targetStackIndex: number) => {
+    if (!draggedCard || !playerId || !myPlayer) return;
+
+    const hand = myPlayer.hand;
+    const draggedStackIndex = hand.findIndex(stack => stack[0] === draggedCard);
+    if (draggedStackIndex === -1 || draggedStackIndex === targetStackIndex) return;
+
+    wsRef.current?.send(JSON.stringify({
+      type: "MERGE_HAND_STACK",
+      fromStack: draggedStackIndex,
+      toStack: targetStackIndex
     }));
 
     setDraggedCard(null);
