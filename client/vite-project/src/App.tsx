@@ -11,16 +11,16 @@ interface PlayerState {
 
 interface CardStackProps {
   stack: string[];
-  draggableTop?: boolean;
-  onDragTop?: (card: string) => void;
-  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void;
+  stackIndex: number;
+  draggable?: boolean;
+  onDragStart?: (stackIndex: number) => void;
+  onDrop?: (stackIndex: number) => void;
 }
 
 interface HandRowProps {
   hand: PlayerState["hand"];
   top: string;
   isPlayer: boolean;
-  onDragCard?: (card: string) => void;
 }
 
 interface CursorPosition {
@@ -62,7 +62,7 @@ function App() {
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
   const playerIdRef = useRef<string | null>(null);
-  const [draggedCard, setDraggedCard] = useState<string | null>(null);
+  const [draggedStackIndex, setDraggedStackIndex] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
   // Connect WS and matchmaking
@@ -112,6 +112,7 @@ function App() {
           console.log("Updated Game_State: ", data.state)
           setMessage("");
           setGameState(data.state);
+          setShowStressBtn(!!data.stressAvailable);
           break;
 
         case "COUNTDOWN":
@@ -213,28 +214,6 @@ function App() {
         right: [],
       };
 
-  // Update Stress Btn if central deck piles no. are similiar
-  useEffect(() => {
-    const pile1 = gameState?.center?.pile1;
-    const pile2 = gameState?.center?.pile2;
-
-    if (!pile1?.cards.length || !pile2?.cards.length) {
-      setShowStressBtn(false);
-      return;
-    }
-
-    const pile1Top = pile1.cards[0];
-    const pile2Top = pile2.cards[0];
-
-    const shouldShow =
-      pile1Top.slice(0, -1) === pile2Top.slice(0, -1) &&
-      !pile1.autoRefilled &&
-      !pile2.autoRefilled;
-
-    setShowStressBtn(shouldShow);
-  }, [gameState]);
-
-
   const Card: React.FC<CardProps> = ({ 
     label,
     draggable,
@@ -263,45 +242,37 @@ function App() {
 
   const CardStack: React.FC<CardStackProps> = ({
     stack,
-    draggableTop = false,
-    onDragTop,
+    stackIndex,
+    draggable = false,
+    onDragStart,
     onDrop,
   }) => {
     return (
       <div
+        draggable={draggable}
+        onDragStart={() => onDragStart?.(stackIndex)}
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={() => onDrop?.(stackIndex)}
         style={{
           position: "relative",
           width: "7em",
           height: "11em",
+          cursor: draggable ? "grab" : "default",
         }}
-        onDragOver={e => e.preventDefault()}
-        onDrop={onDrop}
       >
-        {stack.map((card, index) => {
-          const isTop = index === stack.length - 1;
-
-          return (
-            <div
-              key={`${card}-${index}`}
-              style={{
-                position: "absolute",
-                top: index * 5,  
-                left: index * 5,  
-                zIndex: index,
-              }}
-            >
-              <Card
-                label={card}
-                draggable={isTop && draggableTop}
-                onDragStart={
-                  isTop && onDragTop
-                    ? () => onDragTop(card)
-                    : undefined
-                }
-              />
-            </div>
-          );
-        })}
+        {stack.map((card, index) => (
+          <div
+            key={`${card}-${index}`}
+            style={{
+              position: "absolute",
+              top: -index * 3,
+              left: index * 2,
+              zIndex: index,
+            }}
+          >
+            <Card label={card} />
+          </div>
+        ))}
       </div>
     );
   };
@@ -311,7 +282,6 @@ function App() {
     hand,
     top,
     isPlayer,
-    onDragCard,
   }) => {
     return (
       <div
@@ -328,9 +298,10 @@ function App() {
           <CardStack
             key={index}
             stack={stack}
-            draggableTop={isPlayer}
-            onDragTop={onDragCard}
-            onDrop={() => handleDropOnHandStack(index)}
+            stackIndex={index}
+            draggable={isPlayer}
+            onDragStart={(fromIndex) => setDraggedStackIndex(fromIndex)}
+            onDrop={(toIndex) => handleDropOnHandStack(toIndex)}
           />
         ))}
       </div>
@@ -338,33 +309,30 @@ function App() {
   };
 
   const handleDropOnPile = (viewPile: "left" | "right") => {
-    if (!draggedCard || !playerId || !myPlayer) return;
+    if (draggedStackIndex === null || !playerId) return;
 
     const pileName = viewPile === "left" ? "pile1" : "pile2";
 
     wsRef.current?.send(JSON.stringify({
       type: "PLAY_CARD",
-      card: draggedCard,
+      fromStack: draggedStackIndex,
       pile: pileName
     }));
 
-    setDraggedCard(null); // clear local drag state
+    setDraggedStackIndex(null); 
   };
 
-  const handleDropOnHandStack = (targetStackIndex: number) => {
-    if (!draggedCard || !playerId || !myPlayer) return;
-
-    const hand = myPlayer.hand;
-    const draggedStackIndex = hand.findIndex(stack => stack[0] === draggedCard);
-    if (draggedStackIndex === -1 || draggedStackIndex === targetStackIndex) return;
+  const handleDropOnHandStack = (toStackIndex: number) => {
+    if (draggedStackIndex === null || !playerId) return;
+    if (draggedStackIndex === toStackIndex) return;
 
     wsRef.current?.send(JSON.stringify({
       type: "MERGE_HAND_STACK",
       fromStack: draggedStackIndex,
-      toStack: targetStackIndex
+      toStack: toStackIndex
     }));
 
-    setDraggedCard(null);
+    setDraggedStackIndex(null);
   };
 
   // Display Player's card count
@@ -432,7 +400,6 @@ function App() {
           hand={myHandStacks}
           top="85%"
           isPlayer={true}
-          onDragCard={(card) => setDraggedCard(card)}
         />
       )}
 

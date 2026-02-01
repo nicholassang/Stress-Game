@@ -138,39 +138,32 @@ wss.on("connection", (ws) => {
         const player = room.game_state[ws.id];
         if (!player) return;
 
-        const { card, pile } = data;
+        const { fromStack, pile } = data;
+        const stack = player.hand[fromStack];
+        if (!stack || stack.length === 0) return;
+
+        const card = stack[0]; 
         const topCard = room.game_state.center[pile].cards[0];
 
-        // Enforce playable card
-        if (!isPlayable(card, topCard)) {
-          return; 
+        if (topCard && !isPlayable(card, topCard)) {
+          return;
         }
 
-        // Find the stack containing the dragged card at the top
-        for (const stack of player.hand) {
-          if (stack[stack.length - 1] === card) {
-            stack.pop(); // remove the top card
-            break;
-          }
+        stack.shift();
+
+        if (stack.length === 0 && player.deck.length > 0) {
+          stack.push(player.deck.shift());
         }
 
-        // Draw new card from deck if hand < 4
-        for (const stack of player.hand) {
-          if (stack.length === 0 && player.deck.length > 0) {
-            stack.push(player.deck.shift());
-          }
-        }
-
-        // Add card to pile
         room.game_state.center[pile].cards.unshift(card);
 
         broadcastRoom(ws.roomId, {
           type: "GAME_UPDATE",
           state: room.game_state,
+          stressAvailable: computeStressAvailable(room.game_state),
         });
 
         await ensurePlayableState(room, ws.roomId);
-
         break;
       }
       case "MERGE_HAND_STACK": {
@@ -181,26 +174,35 @@ wss.on("connection", (ws) => {
         const player = room.game_state[ws.id];
         if (!player) return;
 
-        const draggedCard = player.hand[fromStack][0];
-        const targetCard = player.hand[toStack][0];
+        if (fromStack === toStack) return;
 
-        if (!draggedCard || !targetCard) return;
+        const from = player.hand[fromStack];
+        const to = player.hand[toStack];
 
-        if (draggedCard.slice(0,-1) === targetCard.slice(0,-1)) {
-          // Merge card
-          player.hand[toStack].unshift(draggedCard);
-          player.hand[fromStack].shift();
+        if (!from.length || !to.length) return;
 
-          // Refill empty stack
-          if (player.hand[fromStack].length === 0 && player.deck.length > 0) {
-            player.hand[fromStack].push(player.deck.shift());
+        const fromValue = from[0].slice(0, -1);
+        const toValue = to[0].slice(0, -1);
+
+        if (fromValue === toValue) {
+          to.unshift(...from);
+          from.length = 0;
+
+          if (player.deck.length > 0) {
+            from.push(player.deck.shift());
           }
-
-          broadcastRoom(ws.roomId, {
-            type: "GAME_UPDATE",
-            state: room.game_state
-          });
+        } 
+        else {
+          [player.hand[fromStack], player.hand[toStack]] =
+            [player.hand[toStack], player.hand[fromStack]];
         }
+
+        broadcastRoom(ws.roomId, {
+          type: "GAME_UPDATE",
+          state: room.game_state,
+          stressAvailable: computeStressAvailable(room.game_state)
+        });
+
         break;
       }
       case "STRESS": {
@@ -232,7 +234,7 @@ wss.on("connection", (ws) => {
         for (const pile of piles) {
           if (game.center[pile].length === 0) {
             for (const pid of playerIds) {
-              const card = game[pid].deck.shift();
+              const card = drawFromDeckOrHand(game[pid]);
               if (card) game.center[pile].cards.unshift(card);
             }
           }
@@ -244,6 +246,7 @@ wss.on("connection", (ws) => {
         broadcastRoom(ws.roomId, {
           type: "GAME_UPDATE",
           state: game,
+          stressAvailable: computeStressAvailable(room.game_state)
         });
         break;
       }
@@ -325,7 +328,7 @@ async function ensurePlayableState(room, roomId) {
   for (const pile of piles) {
     if (game.center[pile].cards.length === 0) {
       for (const pid of playerIds) {
-        const card = game[pid].deck.shift();
+        const card = drawFromDeckOrHand(game[pid]);
         if (card) game.center[pile].cards.unshift(card);
       }
       game.center[pile].autoRefilled = true;
@@ -368,13 +371,20 @@ async function ensurePlayableState(room, roomId) {
       const pile = piles[i];
       const pid = playerIds[i];
       if (pid) {
-        const card = game[pid].deck.shift();
+        const card = drawFromDeckOrHand(game[pid]);
         if (card) game.center[pile].cards.unshift(card);
       }
       game.center[pile].autoRefilled = true;
     }
 
-    broadcastRoom(roomId, { type: "GAME_UPDATE", state: game });
+    const pile1Top = game.center.pile1.cards[0];
+    const pile2Top = game.center.pile2.cards[0];
+
+    broadcastRoom(roomId, { 
+      type: "GAME_UPDATE", 
+      state: game,
+      stressAvailable: computeStressAvailable(game) 
+    });
     room.countdownActive = false;
 
     for (const pile of piles) {
@@ -392,6 +402,33 @@ function broadcastCountdown(roomId, seconds) {
     seconds,
     message: `Refilling pile in ${seconds}...`
   });
+}
+
+function computeStressAvailable(game) {
+  const pile1Top = game.center.pile1.cards[0];
+  const pile2Top = game.center.pile2.cards[0];
+
+  return (
+    pile1Top &&
+    pile2Top &&
+    pile1Top.slice(0, -1) === pile2Top.slice(0, -1) &&
+    !game.center.pile1.autoRefilled &&
+    !game.center.pile2.autoRefilled
+  );
+}
+
+function drawFromDeckOrHand(player) {
+  if (player.deck.length > 0) {
+    return player.deck.shift();
+  }
+
+  const nonEmptyStacks = player.hand.filter(stack => stack.length > 0);
+  if (nonEmptyStacks.length === 0) return null;
+
+  const stack =
+    nonEmptyStacks[Math.floor(Math.random() * nonEmptyStacks.length)];
+
+  return stack.shift();
 }
 
 server.listen(8080, () => {
