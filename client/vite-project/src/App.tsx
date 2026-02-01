@@ -39,6 +39,13 @@ interface Pile {
   autoRefilled: boolean;
 }
 
+interface DeckPileProps {
+  count: number;      
+  label?: string;   
+  mirrored?: boolean;
+  showCount?: boolean; 
+}
+
 interface GameState {
   [playerId: string]: PlayerState | { pile1: Pile; pile2: Pile };
   center: {
@@ -303,6 +310,54 @@ function App() {
     </div>
   );
 
+  const DeckPile: React.FC<DeckPileProps> = ({ count, label, mirrored = false, showCount = true }) => {
+    const maxVisible = 10; 
+    const visibleCount = Math.min(count, maxVisible);
+
+    return (
+      <div style={{ position: "relative", width: "7em", height: "11em" }}>
+        {[...Array(visibleCount)].map((_, i) => (
+          <div
+            key={i}
+            style={{
+              position: "absolute",
+              top: mirrored ? i * 2 : -i * 2,
+              left: mirrored ? -i * 1.5 : i * 1.5,
+              width: "7em",
+              height: "9.8em",
+              borderRadius: "20px",
+              background: "gray",
+              border: "1px solid black",
+              display: "flex",
+              justifyContent: "center",
+              alignItems: "center",
+              color: "white",
+              fontWeight: "bold",
+              zIndex: i,
+              userSelect: "none",
+            }}
+          >
+            {i === 0 && label ? label : ""}
+          </div>
+        ))}
+        {showCount && count > maxVisible && (
+          <div
+            style={{
+              position: "absolute",
+              bottom: "-1.5em",
+              left: "50%",
+              transform: "translateX(-50%)",
+              fontSize: "0.8em",
+              fontWeight: "bold",
+            }}
+          >
+            {count} cards
+          </div>
+        )}
+      </div>
+    );
+  };
+
   const CardStack: React.FC<CardStackProps> = ({
     stack,
     stackIndex,
@@ -409,10 +464,18 @@ function App() {
     setDraggedStackIndex(null);
   };
 
-  // Display Player's card count
+  // Display Player's cards
   const myPlayer = playerId && gameState
     ? gameState[playerId] as PlayerState
     : null;
+
+  // Display Player's cards
+  const opponentPlayer =
+    playerId && gameState
+      ? Object.keys(gameState)
+          .filter(id => id !== "center" && id !== playerId)
+          .map(id => gameState[id] as PlayerState)[0]
+      : null;
 
   return (
     <div
@@ -534,38 +597,25 @@ function App() {
         id="playerDeck"
         style={{
           position: "absolute",
-          bottom: "3em",
-          right: "1em",
-          transform: "translate(-50%, -50%)",
+          bottom: "20%",
+          right: "9%",
+          transform: "translate(50%, 50%)",
         }}
       >
-        
+        <DeckPile count={myPlayer?.deck.length ?? 0} showCount={true} />
       </div>
 
-      {/* Opponents's Deck */}
+      {/* Opponent's Deck */}
       <div 
         id="opponentDeck"
         style={{
           position: "absolute",
-          bottom: "3em",
-          right: "1em",
-          transform: "translate(-50%, -50%)",
+          top: "20%",
+          left: "9%",
+          transform: "translate(-50%, -50%) rotate(180deg)",
         }}
       >
-        
-      </div>
-
-      {/* Display Player's Own Card Count */}
-      <div 
-        id="cardcount"
-        style={{
-          position: "absolute",
-          bottom: "1em",
-          right: "1em",
-          transform: "translate(-50%, -50%)",
-        }}
-      >
-        Your Deck: {myPlayer?.deck.length ?? "N/A"}
+        <DeckPile count={opponentPlayer?.deck.length ?? 0} showCount={false} />
       </div>
 
       {/* Card Moving Animation */}
