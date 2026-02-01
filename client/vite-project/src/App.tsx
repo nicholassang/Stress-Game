@@ -66,7 +66,6 @@ function App() {
   const opponentsRef = useRef<Opponents>({}); // store latest positions
   const opponentDivsRef = useRef<Record<string, HTMLDivElement>>({}); // visual div (red)
   const lastSentRef = useRef<number>(0);
-  const [findMatchDisabled, setFindMatchDisabled] = useState(false);
   const [showStressBtn, setShowStressBtn] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
   const [playerId, setPlayerId] = useState<string | null>(null);
@@ -81,11 +80,15 @@ function App() {
   const floatingCardRef = useRef<HTMLDivElement | null>(null);
   const [roomIdInput, setRoomIdInput] = useState("");
   const [hostJoinGameDisabled, setHostJoinGameDisabled] = useState<boolean>(false);
+  const [lobbyMode, setLobbyMode] = useState<
+    "idle" | "hosting" | "finding"
+  >("idle");
 
   // When the game starts, clear message baord
   useEffect(() => {
     if (gameState) {
-      setMessage(null);
+      setLobbyMode("idle");
+      setHostJoinGameDisabled(false);
     }
   }, [gameState]);
 
@@ -117,7 +120,6 @@ function App() {
           console.log("Match found!", data.players);
           console.log("Room State", data.state);
           setGameState(data.state);
-          setFindMatchDisabled(true);
           break;
 
         case "MOUSE_UPDATE":
@@ -126,7 +128,6 @@ function App() {
 
         case "OPPONENT_DISCONNECTED":
           console.log("OPPONENT DISCONNECTED")
-          setFindMatchDisabled(false);
           const div = opponentDivsRef.current[data.playerId];
           if (div && div.parentNode) div.parentNode.removeChild(div);
           delete opponentsRef.current[data.playerId];
@@ -551,16 +552,13 @@ function App() {
 
             {/* Host Room */}
             <button
-              style={{ 
-                padding: "0.9rem 2rem", 
-                fontSize: "1.1rem", 
-                width: "100%",
-              }}
+              style={{ padding: "0.9rem 2rem", fontSize: "1.1rem", width: "100%" }}
               onClick={() => {
-                setHostJoinGameDisabled(true)
                 wsRef.current?.send(JSON.stringify({ type: "HOST_ROOM" }));
+                setLobbyMode("hosting");
+                setHostJoinGameDisabled(true);
               }}
-              disabled = {hostJoinGameDisabled}
+              disabled={lobbyMode !== "idle"}
             >
               Host Room
             </button>
@@ -612,14 +610,51 @@ function App() {
               }}
               onClick={() => {
                 wsRef.current?.send(JSON.stringify({ type: "FIND_MATCH" }));
-                setHostJoinGameDisabled(false)
-                setFindMatchDisabled(true);
-                setMessage("Finding a match...")
+                setLobbyMode("finding");
+                setMessage("Finding a match...");
               }}
-              disabled={findMatchDisabled}
+              disabled={lobbyMode !== "idle"}
             >
               Find Match
             </button>
+
+            {/* Cancel Button */}
+            {lobbyMode === "hosting" && (
+              <button
+                style={{
+                  padding: "0.7rem 1.5rem",
+                  fontSize: "1rem",
+                  width: "100%",
+                }}
+                onClick={() => {
+                  wsRef.current?.send(JSON.stringify({ type: "CANCEL_HOST" }));
+                  setLobbyMode("idle");
+                  setHostJoinGameDisabled(false);
+                  setMessage(null);
+                }}
+              >
+                Cancel Hosting
+              </button>
+            )}
+
+            {lobbyMode === "finding" && (
+              <button
+                style={{
+                  padding: "0.7rem 1.5rem",
+                  fontSize: "1rem",
+                  width: "100%",
+                }}
+                onClick={() => {
+                  wsRef.current?.send(JSON.stringify({ type: "CANCEL_FIND_MATCH" }));
+                  setLobbyMode("idle");
+                  setMessage(null);
+                }}
+              >
+                Cancel Matchmaking
+              </button>
+            )}
+
+            {/* Landing Page Message Box */}
             {message && (
               <div style={{ marginTop: "0.75rem", width: "100%" }}>
                 {MessageBox}

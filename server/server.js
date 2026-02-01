@@ -54,6 +54,20 @@ wss.on("connection", (ws) => {
     try { data = JSON.parse(msg); } catch { return; }
 
     switch (data.type) {
+      case "CANCEL_HOST": {
+        if (!ws.roomId) return;
+
+        const room = rooms.get(ws.roomId);
+        if (!room) return;
+
+        rooms.delete(ws.roomId);
+        ws.roomId = null;
+
+        ws.send(JSON.stringify({
+          type: "HOST_CANCELLED"
+        }));
+        break;
+      }
       case "HOST_ROOM": {
         let roomId = "";
         do {
@@ -142,6 +156,13 @@ wss.on("connection", (ws) => {
         });
 
         await ensurePlayableState(room, roomId);
+        break;
+      }
+      case "CANCEL_FIND_MATCH": {
+        const idx = waitingPlayers.indexOf(ws);
+        if (idx !== -1) {
+          waitingPlayers.splice(idx, 1);
+        }
         break;
       }
       case "FIND_MATCH":
