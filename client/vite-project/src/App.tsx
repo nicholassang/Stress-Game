@@ -1,6 +1,27 @@
 // App.tsx
 import { useState, useEffect, useRef } from "react";
 
+type CardLabel = string;
+type CardStackType = CardLabel[];
+
+interface PlayerState {
+  deck: string[];
+  hand: [CardStackType, CardStackType, CardStackType, CardStackType];
+}
+
+interface CardStackProps {
+  stack: string[];
+  draggableTop?: boolean;
+  onDragTop?: (card: string) => void;
+}
+
+interface HandRowProps {
+  hand: PlayerState["hand"];
+  top: string;
+  isPlayer: boolean;
+  onDragCard?: (card: string) => void;
+}
+
 interface CursorPosition {
   x: number;
   y: number;
@@ -8,11 +29,6 @@ interface CursorPosition {
 
 interface Opponents {
   [id: string]: CursorPosition;
-}
-
-interface PlayerState {
-  deck: string[];
-  hand: string[];
 }
 
 interface Pile {
@@ -55,7 +71,7 @@ function App() {
 
     // Connection Begin
     ws.onopen = () => {
-      console.log("✅ Connected to server");
+      console.log("Connected to server");
     };
 
     // From Server
@@ -169,20 +185,20 @@ function App() {
     animate();
   }, []);
 
-  const myHand =
+  const myHandStacks =
     playerId && gameState
       ? (gameState[playerId] as PlayerState).hand
-      : [];
+      : null;
 
-  const opponentHand =
+  const opponentHandStacks =
     playerId && gameState
       ? Object.keys(gameState)
-          .filter((id) => id !== "center" && id !== playerId)
-          .map((id) => (gameState[id] as PlayerState).hand)[0] ?? []
-      : [];
+          .filter(id => id !== "center" && id !== playerId)
+          .map(id => (gameState[id] as PlayerState).hand)[0]
+      : null;
 
-  console.log("My Hand: ", myHand)
-  console.log("Opponent: ", opponentHand)
+  console.log("My Hand: ", myHandStacks)
+  console.log("Opponent: ", opponentHandStacks)
   console.log("Central Piles: ", gameState?.center)
 
   // Order Central Deck
@@ -244,33 +260,76 @@ function App() {
     </div>
   );
 
-  const renderRow = (
-    items: string[], 
-    top: string,
-    draggable = false,
-  ) => (
-    <div
-      style={{
-        display: "flex",
-        flexDirection: "row",
-        position: "absolute",
-        top,
-        left: "50%",
-        transform: "translate(-50%, -50%)",
-        background: "orange",
-        gap: "5em",
-      }}
-    >
-      {items.map((label, idx) => (
-        <Card 
-        key={idx} 
-        label={label} 
-        draggable={draggable}
-        onDragStart={() => setDraggedCard(label)}
-        />
-      ))}
-    </div>
-  );
+  const CardStack: React.FC<CardStackProps> = ({
+    stack,
+    draggableTop = false,
+    onDragTop,
+  }) => {
+    return (
+      <div
+        style={{
+          position: "relative",
+          width: "7em",
+          height: "11em",
+        }}
+      >
+        {stack.map((card, index) => {
+          const isTop = index === stack.length - 1;
+
+          return (
+            <div
+              key={`${card}-${index}`}
+              style={{
+                top: index * 3,   // vertical offset for stacking
+                left: index * 2,  // slight horizontal offset
+                zIndex: index,
+              }}
+            >
+              <Card
+                label={card}
+                draggable={isTop && draggableTop}
+                onDragStart={
+                  isTop && onDragTop
+                    ? () => onDragTop(card)
+                    : undefined
+                }
+              />
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
+
+  const HandRow: React.FC<HandRowProps> = ({
+    hand,
+    top,
+    isPlayer,
+    onDragCard,
+  }) => {
+    return (
+      <div
+        style={{
+          display: "flex",
+          position: "absolute",
+          top,
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          gap: "5em",
+        }}
+      >
+        {hand.map((stack, index) => (
+          <CardStack
+            key={index}
+            stack={stack}
+            draggableTop={isPlayer}
+            onDragTop={onDragCard}
+          />
+        ))}
+      </div>
+    );
+  };
 
   const handleDropOnPile = (viewPile: "left" | "right") => {
     if (!draggedCard || !playerId) return;
@@ -346,10 +405,23 @@ function App() {
       </div>
 
       {/* Local Hand */}
-      {renderRow(myHand, "85%", true)}
+      {myHandStacks && (
+        <HandRow
+          hand={myHandStacks}
+          top="85%"
+          isPlayer={true}
+          onDragCard={(card) => setDraggedCard(card)}
+        />
+      )}
 
       {/* Opponent Hand */}
-      {renderRow(opponentHand, "15%")}
+      {opponentHandStacks && (
+        <HandRow
+          hand={opponentHandStacks}
+          top="15%"
+          isPlayer={false}
+        />
+      )}
 
       {/* Local cursor */}
       <div

@@ -74,11 +74,21 @@ wss.on("connection", (ws) => {
             game_state: {
               [ws.id]: {
                 deck: playerADeck,
-                hand: playerAHand,
+                hand: [
+                  [playerAHand[0]],
+                  [playerAHand[1]],
+                  [playerAHand[2]],
+                  [playerAHand[3]],
+                ],
               },
               [opponent.id]: {
                 deck: playerBDeck,
-                hand: playerBHand,
+                hand: [
+                  [playerBHand[0]],
+                  [playerBHand[1]],
+                  [playerBHand[2]],
+                  [playerBHand[3]],
+                ],
               },
             center: {
               pile1: { cards: [], autoRefilled: false },
@@ -91,7 +101,7 @@ wss.on("connection", (ws) => {
           ws.roomId = roomId;
           opponent.roomId = roomId;
 
-          await ensurePlayableState(room, roomId);
+          await ensurePlayableState(room, roomId);  
 
           broadcastRoom(roomId, {
             type: "MATCH_FOUND",
@@ -99,6 +109,8 @@ wss.on("connection", (ws) => {
             players: room.playerOrder,
             state: room.game_state,
           });
+
+          await ensurePlayableState(room, roomId);  
         } else {
           waitingPlayers.push(ws);
         }
@@ -136,11 +148,18 @@ wss.on("connection", (ws) => {
         }
 
         // Remove card from hand
-        player.hand = player.hand.filter(c => c !== card);
+        for (const stack of player.hand) {
+          if (stack[0] === card) {
+            stack.shift(); // remove top card
+            break;
+          }
+        }
 
         // Draw new card from deck if hand < 4
-        while (player.hand.length < 4 && player.deck.length > 0) {
-          player.hand.push(player.deck.shift());
+        for (const stack of player.hand) {
+          if (stack.length === 0 && player.deck.length > 0) {
+            stack.push(player.deck.shift());
+          }
         }
 
         // Add card to pile
@@ -160,7 +179,6 @@ wss.on("connection", (ws) => {
         const room = rooms.get(ws.roomId);
         if (!room) return;
         const game = room.game_state;
-        // Find opponent id
         const opponentId = Object.keys(game).find(
           (id) => id !== ws.id && id !== "center"
         );
@@ -288,7 +306,9 @@ async function ensurePlayableState(room, roomId) {
     const topCard = game.center[pile].cards[0];
     if (!topCard) return false;
     return playerIds.some(pid =>
-      game[pid].hand.some(c => isPlayable(c, topCard))
+      game[pid].hand.some(stack =>
+        stack.length > 0 && isPlayable(stack[0], topCard)
+      )
     );
   });
 
@@ -329,6 +349,9 @@ async function ensurePlayableState(room, roomId) {
     for (const pile of piles) {
       game.center[pile].autoRefilled = false;
     }
+
+    // Edge Case: refilled decks still have no playable cards 
+    await ensurePlayableState(room, roomId);  
   }
 }
 
