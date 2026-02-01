@@ -87,10 +87,35 @@ function App() {
   // When the game starts, clear message baord
   useEffect(() => {
     if (gameState) {
+      setMessage("")
       setLobbyMode("idle");
       setHostJoinGameDisabled(false);
     }
   }, [gameState]);
+
+  // Prevent zoom
+  useEffect(() => {
+    const preventZoom = (e: WheelEvent | KeyboardEvent) => {
+      // Ctrl + wheel
+      if ('ctrlKey' in e && e.ctrlKey) {
+        e.preventDefault();
+      }
+
+      // Ctrl + +/- or Ctrl + 0
+      if ('key' in e && e.ctrlKey) {
+        const keys = ['+', '-', '=', '0'];
+        if (keys.includes(e.key)) e.preventDefault();
+      }
+    };
+
+    window.addEventListener('wheel', preventZoom as any, { passive: false });
+    window.addEventListener('keydown', preventZoom as any, { passive: false });
+
+    return () => {
+      window.removeEventListener('wheel', preventZoom as any);
+      window.removeEventListener('keydown', preventZoom as any);
+    };
+  }, []);
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -163,33 +188,36 @@ function App() {
 
   // Track local mouse
   useEffect(() => {
-    const handleMouse = (e: MouseEvent) => {
-      // Update local cursor instantly
+    const handleMouseMove = (e: MouseEvent) => {
+      // Move local cursor
       if (localCursorRef.current) {
         localCursorRef.current.style.left = `${e.clientX}px`;
         localCursorRef.current.style.top = `${e.clientY}px`;
+      }
+
+      // Move floating card
+      if (floatingCardRef.current) {
+        floatingCardRef.current.style.left = `${e.clientX}px`;
+        floatingCardRef.current.style.top = `${e.clientY}px`;
       }
 
       // Throttle WS messages (~20Hz)
       const now = Date.now();
       if (now - lastSentRef.current > 50) {
         lastSentRef.current = now;
-        if (wsRef.current?.readyState === WebSocket.OPEN) {
+        wsRef.current?.readyState === WebSocket.OPEN &&
           wsRef.current.send(
-            JSON.stringify({ type: "MOUSE_MOVE", x: e.clientX, y: e.clientY })
+            JSON.stringify({
+              type: "MOUSE_MOVE",
+              x: e.clientX,
+              y: e.clientY,
+            })
           );
-        }
       }
     };
 
-    window.addEventListener("mousemove", (e) => {
-      if (floatingCardRef.current) {
-        floatingCardRef.current.style.left = `${e.clientX}px`;
-        floatingCardRef.current.style.top = `${e.clientY}px`;
-      }
-      setFloatingCardPos({ x: e.clientX, y: e.clientY }); // optional, keeps state in sync
-    });
-    return () => window.removeEventListener("mousemove", handleMouse);
+    window.addEventListener("mousemove", handleMouseMove);
+    return () => window.removeEventListener("mousemove", handleMouseMove);
   }, []);
 
   // requestAnimationFrame loop to render opponent cursors
@@ -309,7 +337,7 @@ function App() {
     onDragStart
   }) => (
     <div
-      draggable={draggable}
+      draggable={draggable ?? false}
       onDragStart={onDragStart}
       style={{
         display: "flex",
@@ -322,8 +350,10 @@ function App() {
         borderRadius: "20px",
         cursor: draggable ? "grab" : "default",
         userSelect: "none",
-        color: "black"
+        color: "black",
+        fontSize: "1em",
       }}
+      onMouseDown={(e) => e.preventDefault()}
     >
       {label}
     </div>
@@ -368,6 +398,7 @@ function App() {
               transform: "translateX(-50%)",
               fontSize: "0.8em",
               fontWeight: "bold",
+              userSelect: 'none'
             }}
           >
             {count} cards
@@ -388,17 +419,21 @@ function App() {
   }) => {
     return (
       <div
-        draggable={draggable}
+        draggable={false}
         onDragStart={() => onDragStart?.(stackIndex)}
         onDragOver={(e) => e.preventDefault()}
         onDrop={() => onDrop?.(stackIndex)}
-        onMouseDown={onMouseDown} 
+        onMouseDown={(e) => {
+          onMouseDown?.(e);
+          e.preventDefault(); 
+        }}
         className={className}     
         style={{
           position: "relative",
           width: "7em",
           height: "11em",
           cursor: draggable ? "grab" : "default",
+          userSelect: "none",
         }}
       >
         {stack.map((card, index) => (
@@ -492,6 +527,7 @@ function App() {
         borderRadius: "8px",
         minWidth: "200px",
         textAlign: "center",
+        userSelect: 'none'
       }}
     >
       {message || ""}
@@ -683,12 +719,22 @@ function App() {
       {gameState && (
         <div
           style={{
-            display: "flex",
             position: "absolute",
             top: "50%",
             left: "50%",
             transform: "translate(-50%, -50%)",
-            gap: "5em",
+            display: "flex",
+            gap: "4.5em",
+            padding: "2.6em 3.4em",
+            background: "radial-gradient(circle at center, #b08968 0%, #7a4a2e 70%)",
+            borderRadius: "999px", 
+            border: "4px solid #5a3218",
+            boxShadow: `
+              inset 0 6px 12px rgba(0,0,0,0.35),
+              0 10px 25px rgba(0,0,0,0.4)
+            `,
+
+            zIndex: 10,
           }}
         >
           <div id="pile-left" onMouseOver={() => {}}>
@@ -705,7 +751,7 @@ function App() {
       {myHandStacks && (
         <HandRow
           hand={myHandStacks}
-          top="85%"
+          top="88%"
           isPlayer={true}
         />
       )}
