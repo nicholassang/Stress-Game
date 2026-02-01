@@ -83,6 +83,8 @@ function App() {
   const [lobbyMode, setLobbyMode] = useState<
     "idle" | "hosting" | "finding"
   >("idle");
+  const [remainingTime, setRemainingTime] = useState<number | null>(6000);
+  const [winner, setWinner] = useState<string | null>(null);
 
   // When the game starts, clear message baord
   useEffect(() => {
@@ -141,6 +143,10 @@ function App() {
           setMessage(data.message);
           break;
 
+        case "TIME_UPDATE":
+          setRemainingTime(data.remainingTime);
+          break;
+
         case "MATCH_FOUND":
           console.log("Match found!", data.players);
           console.log("Room State", data.state);
@@ -177,6 +183,17 @@ function App() {
         case "COUNTDOWN":
           setMessage(data.message);
           break;
+
+      case "GAME_END":
+        setWinner(data.winner); 
+        setMessage(
+          data.winner
+            ? data.winner === playerId
+              ? "You won!"
+              : "You lost!"
+            : "It's a tie!"
+        );
+        break;
 
         default:
           break;
@@ -353,7 +370,10 @@ function App() {
         color: "black",
         fontSize: "1em",
       }}
-      onMouseDown={(e) => e.preventDefault()}
+      onMouseDown={(e) => {
+        if (winner) return;
+        e.preventDefault()
+      }}
     >
       {label}
     </div>
@@ -424,6 +444,7 @@ function App() {
         onDragOver={(e) => e.preventDefault()}
         onDrop={() => onDrop?.(stackIndex)}
         onMouseDown={(e) => {
+          if (winner) return;
           onMouseDown?.(e);
           e.preventDefault(); 
         }}
@@ -478,6 +499,7 @@ function App() {
             draggable={false} 
             onDragStart={undefined}
             onMouseDown={(e) => {
+              if (winner) return;
               if (isPlayer && stack.length > 0) {
                 setDraggedStackIndex(index);
                 setDraggingCard({ label: stack[0], originStack: index });
@@ -533,6 +555,14 @@ function App() {
       {message || ""}
     </div>
   );
+
+  // Util function for timer
+  const formatTime = (ms: number) => {
+    const totalSeconds = Math.max(Math.floor(ms / 1000), 0);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    return `${minutes.toString().padStart(2, '0')}:${seconds.toString().padStart(2,'0')}`;
+  };
 
   // Display Player's cards
   const myPlayer = playerId && gameState
@@ -853,6 +883,49 @@ function App() {
         </div>
       )}
 
+    {/* 10min Timer */}
+    {remainingTime !== null && (
+      <div
+        style={{
+          position: "absolute",
+          top: "10%",
+          left: "90%",
+          transform: "translateX(-50%)",
+          fontSize: "2rem",
+          fontWeight: "bold",
+          color: "#fff",
+          textShadow: "0 0 5px black",
+          zIndex: 200,
+        }}
+      >
+        {formatTime(remainingTime)}
+      </div>
+    )}
+
+    {/* Game End Screen */}
+    {winner && (
+      <div
+        style={{
+          position: "absolute",
+          top: "40%",
+          left: "50%",
+          transform: "translate(-50%, -50%)",
+          background: "rgba(80, 79, 79, 0.7)",
+          color: "white",
+          padding: "2rem 3rem",
+          borderRadius: "12px",
+          fontSize: "2rem",
+          fontWeight: "bold",
+          zIndex: 300,
+          textAlign: "center",
+        }}
+      >
+        {message}
+        <div style={{ marginTop: "1rem", fontSize: "1rem" }}>
+          Refresh page or go back to lobby to play again
+        </div>
+      </div>
+    )}
     </div>
   );
 }

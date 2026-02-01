@@ -148,6 +148,28 @@ wss.on("connection", (ws) => {
 
         await ensurePlayableState(room, roomId);
 
+        // Set 10min timer
+        const startTime = Date.now(); 
+        const duration = 10 * 60 * 10; 
+
+        room.startTime = startTime;
+        room.duration = duration;
+
+        room.timeInterval = setInterval(() => {
+          const elapsed = Date.now() - room.startTime;
+          const remaining = room.duration - elapsed;
+
+          broadcastRoom(roomId, {
+            type: "TIME_UPDATE",
+            remainingTime: remaining
+          });
+
+          if (remaining <= 0) {
+            clearInterval(room.timeInterval);
+            handleTimeUp(roomId);
+          }
+        }, 1000);
+
         broadcastRoom(roomId, {
           type: "MATCH_FOUND",
           roomId,
@@ -213,6 +235,28 @@ wss.on("connection", (ws) => {
           opponent.roomId = roomId;
 
           await ensurePlayableState(room, roomId);  
+
+          // Set 10min timer
+          const startTime = Date.now(); 
+          const duration = 10 * 60 * 10; 
+
+          room.startTime = startTime;
+          room.duration = duration;
+
+          room.timeInterval = setInterval(() => {
+            const elapsed = Date.now() - room.startTime;
+            const remaining = room.duration - elapsed;
+
+            broadcastRoom(roomId, {
+              type: "TIME_UPDATE",
+              remainingTime: remaining
+            });
+
+            if (remaining <= 0) {
+              clearInterval(room.timeInterval);
+              handleTimeUp(roomId);
+            }
+          }, 1000);
 
           broadcastRoom(roomId, {
             type: "MATCH_FOUND",
@@ -550,6 +594,27 @@ function generateRoomCode(length = 5) {
     code += chars.charAt(Math.floor(Math.random() * chars.length));
   }
   return code;
+}
+
+function handleTimeUp(roomId) {
+  const room = rooms.get(roomId);
+  if (!room) return;
+  const game = room.game_state;
+
+  const playerIds = Object.keys(game).filter(id => id !== "center");
+  const counts = playerIds.map(id => 
+    game[id].deck.length + game[id].hand.reduce((sum, stack) => sum + stack.length, 0)
+  );
+
+  let winner;
+  if (counts[0] < counts[1]) winner = playerIds[0];
+  else if (counts[1] < counts[0]) winner = playerIds[1];
+  else winner = null;
+
+  broadcastRoom(roomId, {
+    type: "GAME_END",
+    winner
+  });
 }
 
 server.listen(8080, () => {
