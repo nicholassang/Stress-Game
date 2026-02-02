@@ -152,7 +152,7 @@ wss.on("connection", (ws) => {
 
         // Set 10min timer
         const startTime = Date.now(); 
-        const duration = 10 * 60 * 10; 
+        const duration = 10 * 60 * 500; 
 
         room.startTime = startTime;
         room.duration = duration;
@@ -182,7 +182,7 @@ wss.on("connection", (ws) => {
         broadcastRoom(roomId, {
           type: "GAME_UPDATE",
           state: room.game_state,
-          stressAvailable: computeStressAvailable(game),
+          stressAvailable: computeStressAvailable(room.game_state),
         });
 
         await ensurePlayableState(room, roomId);
@@ -640,13 +640,10 @@ async function ensurePlayableState(room, roomId) {
       game.center[pile].autoRefilled = true;
     }
 
-    const pile1Top = game.center.pile1.cards[0];
-    const pile2Top = game.center.pile2.cards[0];
-
     broadcastRoom(roomId, { 
       type: "GAME_UPDATE", 
       state: game,
-      stressAvailable: computeStressAvailable(game) 
+      stressAvailable: computeStressAvailable(room.game_state) 
     });
     room.countdownActive = false;
 
