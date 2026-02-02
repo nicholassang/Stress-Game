@@ -60,6 +60,14 @@ interface CardProps {
   onDragStart?: () => void;
 }
 
+interface MatchRecord {
+  matchId: string;          
+  opponentId: string;        
+  result: "win" | "lose" | "tie";
+  timestamp: number;         
+  allowRematch: boolean;    
+}
+
 function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const localCursorRef = useRef<HTMLDivElement | null>(null);
@@ -89,6 +97,8 @@ function App() {
   const [rematchInvite, setRematchInvite] = useState(false);
   const [rematchPending, setRematchPending] = useState(false);
   const [allowRematch, setAllowRematch] = useState(true);
+  const [recentMatches, setRecentMatches] = useState<MatchRecord[]>([]);
+  const opponentIdRef = useRef<string | null>(null);
 
   // When the game starts, clear message baord
   useEffect(() => {
@@ -123,6 +133,16 @@ function App() {
     };
   }, []);
 
+  // Persists recent matches for user
+  useEffect(() => {
+    localStorage.setItem("recentMatches", JSON.stringify(recentMatches));
+  }, [recentMatches]);
+
+  useEffect(() => {
+    const stored = localStorage.getItem("recentMatches");
+    if (stored) setRecentMatches(JSON.parse(stored));
+  }, []);
+
   // Connect WS and matchmaking
   useEffect(() => {
     const ws = new WebSocket("ws://localhost:8080/ws");
@@ -155,6 +175,12 @@ function App() {
           // console.log("Match found!", data.players);
           // console.log("Room State", data.state);
           setGameState(data.state);
+          if (playerIdRef.current) {
+            const opponentId = Object.keys(data.state).find(
+              id => id !== "center" && id !== playerIdRef.current
+            );
+            opponentIdRef.current = opponentId ?? null;
+          }
           break;
 
         case "MOUSE_UPDATE":
@@ -212,13 +238,33 @@ function App() {
           }
           setWinner(data.winner ?? null);
           setAllowRematch(data.allowRematch ?? true);
+
           if (data.allowRematch === false) {
             setRematchInvite(false);
             setRematchPending(false);
             setHostJoinGameDisabled(true);
           }
+
+          const opponentId = opponentIdRef.current ?? "Unknown";
+
+          // For recent matches
+          setRecentMatches(prev => [
+            {
+              matchId: data.matchId ?? `${Date.now()}`,
+              opponentId,
+              result:
+                playerIdRef.current === data.winner
+                  ? "win"
+                  : data.winner === null
+                  ? "tie"
+                  : "lose",
+              timestamp: Date.now(),
+              allowRematch: data.allowRematch ?? true,
+            },
+            ...prev.slice(0, 9)
+          ]);
           break;
-          
+
         case "REMATCH_INVITE":
           setRematchInvite(true);
           setMessage("Opponent wants a rematch");
@@ -585,6 +631,64 @@ function App() {
     setDraggedStackIndex(null);
   };
 
+  const RecentMatches: React.FC<{ matches: MatchRecord[] }> = ({ matches }) => {
+    return (
+      <div
+        style={{
+          position: "absolute",
+          top: "10%",
+          left: "5%",
+          width: "260px",
+          padding: "1rem",
+          background: "rgba(0,0,0,0.6)",
+          borderRadius: "12px",
+          color: "white",
+          fontSize: "0.85rem",
+          zIndex: 300,
+          userSelect: "none",
+        }}
+      >
+        <h3 style={{ marginBottom: "0.5rem" }}>Recent Matches</h3>
+        {matches.length === 0 && <div>No recent matches</div>}
+        {matches.map((m) => (
+          <div
+            key={m.matchId}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              marginBottom: "0.5rem",
+              background: "rgba(255,255,255,0.1)",
+              padding: "0.5rem",
+              borderRadius: "6px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>ID: {m.matchId}</span>
+              <span
+                style={{
+                  color:
+                    m.result === "win"
+                      ? "#4ade80"
+                      : m.result === "lose"
+                      ? "#f87171"
+                      : "#facc15",
+                  fontWeight: "bold",
+                }}
+              >
+                {m.result.toUpperCase()}
+              </span>
+            </div>
+            <div>Opponent: {m.opponentId}</div>
+            <div>
+              Time: {new Date(m.timestamp).toLocaleString()}
+            </div>
+            <div>Rematch allowed: {m.allowRematch ? "Yes" : "No"}</div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   // Player's Message Box
   const MessageBox = (
     <div
@@ -783,6 +887,11 @@ function App() {
               </div>
             )}
           </div>
+
+          {/* Recent Matches Panel */}
+          {(
+            <RecentMatches matches={recentMatches} />
+          )}
         </div>
       )}
 
@@ -1006,7 +1115,10 @@ function App() {
             background: "#444",
             color: "white",
           }}
-          onClick={handleReturnToLobby}
+          onClick={()=>{
+            handleReturnToLobby()
+            wsRef.current?.send(JSON.stringify({ type: "LEAVE_ROOM" }));
+          }}
         >
           Return to Lobby
         </button>

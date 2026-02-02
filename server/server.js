@@ -152,7 +152,7 @@ wss.on("connection", (ws) => {
 
         // Set 10min timer
         const startTime = Date.now(); 
-        const duration = 10 * 60 * 500; 
+        const duration = 10 * 60 * 10; 
 
         room.startTime = startTime;
         room.duration = duration;
@@ -248,7 +248,7 @@ wss.on("connection", (ws) => {
 
           // Set 5min timer
           const startTime = Date.now(); 
-          const duration = 10 * 60 * 500; 
+          const duration = 10 * 60 * 10; 
 
           room.startTime = startTime;
           room.duration = duration;
@@ -490,7 +490,7 @@ wss.on("connection", (ws) => {
 
           // Restart timer
           room.startTime = Date.now();
-          room.duration = 10 * 60 * 500;
+          room.duration = 10 * 60 * 10;
 
           room.timeInterval = setInterval(() => {
             const remaining = room.duration - (Date.now() - room.startTime);
@@ -512,6 +512,23 @@ wss.on("connection", (ws) => {
         }
 
         break;
+      }
+      case "LEAVE_ROOM": {
+          if (!ws.roomId) break;
+          const roomId = ws.roomId;  
+          const room = rooms.get(roomId);
+          if (!room) break;
+
+          room.players = room.players.filter(p => p !== ws);
+          room.playerOrder = room.playerOrder.filter(id => id !== ws.id);
+
+          ws.roomId = null;
+
+          if (room.players.length === 0 && room.timeInterval) {
+              clearInterval(room.timeInterval);
+              rooms.delete(roomId);
+          }
+          break;
       }
       default:
         console.log("Unknown type:", data.type);
