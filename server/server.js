@@ -40,7 +40,7 @@ server.on("upgrade", (request, socket, head) => {
 
 // WebSocket connection
 wss.on("connection", (ws) => {
-  ws.id = nanoid();
+  ws.id = nanoid(4);
   ws.roomId = null;
   console.log(`Player connected: ${ws.id}`);
 
@@ -198,7 +198,7 @@ wss.on("connection", (ws) => {
       case "FIND_MATCH":
         if (waitingPlayers.length > 0) {
           const opponent = waitingPlayers.shift();
-          const roomId = nanoid();
+          const roomId = nanoid(4);
 
           const deck = createDeck();
 
@@ -246,7 +246,7 @@ wss.on("connection", (ws) => {
 
           await ensurePlayableState(room, roomId);  
 
-          // Set 10min timer
+          // Set 5min timer
           const startTime = Date.now(); 
           const duration = 10 * 60 * 500; 
 
@@ -453,7 +453,7 @@ wss.on("connection", (ws) => {
         if (room.rematchVotes.size === 2) {
           room.rematchVotes.clear();
 
-          // 🔄 Reset game state
+          // Reset game state
           const deck = createDeck();
           const playerADeck = deck.slice(0, 26);
           const playerBDeck = deck.slice(26);

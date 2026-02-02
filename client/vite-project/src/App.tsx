@@ -129,7 +129,7 @@ function App() {
 
     // Connection Begin
     ws.onopen = () => {
-      console.log("Connected to server");
+      // console.log("Connected to server");
     };
 
     // From Server
@@ -138,7 +138,7 @@ function App() {
 
       switch (data.type) {
         case "ROOM_HOSTED":
-          console.log("Room hosted! ID:", data.roomId);
+          // console.log("Room hosted! ID:", data.roomId);
           setMessage(`Room ID: ${data.roomId}. Waiting for opponent...`);
           break;
 
@@ -151,8 +151,8 @@ function App() {
           break;
 
         case "MATCH_FOUND":
-          console.log("Match found!", data.players);
-          console.log("Room State", data.state);
+          // console.log("Match found!", data.players);
+          // console.log("Room State", data.state);
           setGameState(data.state);
           break;
 
@@ -161,7 +161,7 @@ function App() {
           break;
 
         case "OPPONENT_DISCONNECTED":
-          console.log("OPPONENT DISCONNECTED")
+          // console.log("OPPONENT DISCONNECTED")
           const div = opponentDivsRef.current[data.playerId];
           if (div && div.parentNode) div.parentNode.removeChild(div);
           delete opponentsRef.current[data.playerId];
@@ -169,15 +169,15 @@ function App() {
           break;
 
         case "ASSIGN_ID":
-          console.log("ASSIGN_ID")
+          // console.log("ASSIGN_ID")
           playerIdRef.current = data.playerId
           setPlayerId(data.playerId);
-          console.log(playerIdRef)
+          // console.log(playerIdRef)
           break;
 
         case "GAME_UPDATE":
-          console.log("GAME_UPDATE")
-          console.log("Updated Game_State: ", data.state)
+          // console.log("GAME_UPDATE")
+          // console.log("Updated Game_State: ", data.state)
           setMessage("");
           setGameState(data.state);
           setShowStressBtn(!!data.stressAvailable);
@@ -364,9 +364,9 @@ function App() {
           .map(id => (gameState[id] as PlayerState).hand)[0]
       : null;
 
-  console.log("My Hand: ", myHandStacks)
-  console.log("Opponent: ", opponentHandStacks)
-  console.log("Central Piles: ", gameState?.center)
+  // console.log("My Hand: ", myHandStacks)
+  // console.log("Opponent: ", opponentHandStacks)
+  // console.log("Central Piles: ", gameState?.center)
 
   // Order Central Deck
   const viewPiles = gameState
@@ -866,7 +866,7 @@ function App() {
           visibility: showStressBtn ? "visible" : "hidden",
         }}
         onClick={() => {
-          console.log("STRESS !")
+          // console.log("STRESS !")
           wsRef.current?.send(JSON.stringify({ type: "STRESS" }));
           setShowStressBtn(false);
         }}
