@@ -256,7 +256,7 @@ wss.on("connection", (ws) => {
 
           // Set 5min timer
           const startTime = Date.now(); 
-          const duration = 10 * 60 * 0; 
+          const duration = 10 * 60 * 500; 
 
           room.startTime = startTime;
           room.duration = duration;
