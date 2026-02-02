@@ -83,18 +83,20 @@ function App() {
   const [lobbyMode, setLobbyMode] = useState<
     "idle" | "hosting" | "finding"
   >("idle");
-  const [remainingTime, setRemainingTime] = useState<number | null>(6000);
+  const [remainingTime, setRemainingTime] = useState<number | null>(null);
   const [winner, setWinner] = useState<string | null>(null);
   const [gameEnded, setGameEnded] = useState(false);
+  const [rematchInvite, setRematchInvite] = useState(false);
+  const [rematchPending, setRematchPending] = useState(false);
 
   // When the game starts, clear message baord
   useEffect(() => {
-    if (gameState) {
-      setMessage("")
+    if (gameState && !gameEnded) {
+      setMessage("");
       setLobbyMode("idle");
       setHostJoinGameDisabled(false);
     }
-  }, [gameState]);
+  }, [gameState, gameEnded]);
 
   // Prevent zoom
   useEffect(() => {
@@ -203,6 +205,24 @@ function App() {
 
           setWinner(serverWinner);
           break;
+        case "REMATCH_INVITE":
+          setRematchInvite(true);
+          setMessage("Opponent wants a rematch");
+          break;
+
+        case "REMATCH_PENDING":
+          setRematchPending(true);
+          setMessage("Waiting for opponent...");
+          break;
+
+        case "REMATCH_START":
+          setGameEnded(false);
+          setWinner(null);
+          setRematchInvite(false);
+          setRematchPending(false);
+          setRemainingTime(600000);
+          setGameState(data.state);
+          setMessage("");
           break;
 
         default:
@@ -419,7 +439,7 @@ function App() {
             {i === 0 && label ? label : ""}
           </div>
         ))}
-        {showCount && count > maxVisible && (
+        {showCount && (
           <div
             style={{
               position: "absolute",
@@ -565,6 +585,17 @@ function App() {
       {message || ""}
     </div>
   );
+
+  // Return Button
+  const handleReturnToLobby = () => {
+    setGameState(null);
+    setGameEnded(false);
+    setWinner(null);
+    setRemainingTime(null);
+    setRematchInvite(false);
+    setRematchPending(false);
+    setMessage(null);
+  };
 
   // Util function for timer
   const formatTime = (ms: number) => {
@@ -731,7 +762,7 @@ function App() {
             )}
 
             {/* Landing Page Message Box */}
-            {message && (
+            {message !== null && (
               <div style={{ marginTop: "0.75rem", width: "100%" }}>
                 {MessageBox}
               </div>
@@ -741,7 +772,7 @@ function App() {
       )}
 
       {/* Player's Message Box */}
-      {gameState && (
+      {gameState && !gameEnded && (
         <div
           style={{
             position: "absolute",
@@ -894,7 +925,7 @@ function App() {
       )}
 
     {/* 10min Timer */}
-    {remainingTime !== null && (
+    {remainingTime !== null && gameState && !gameEnded && (
       <div
         style={{
           position: "absolute",
@@ -917,23 +948,52 @@ function App() {
       <div
         style={{
           position: "absolute",
-          top: "40%",
-          left: "50%",
-          transform: "translate(-50%, -50%)",
-          background: "rgba(80, 79, 79, 0.7)",
+          inset: 0,
+          background: "rgba(0,0,0,0.6)",
+          display: "flex",
+          flexDirection: "column",
+          justifyContent: "center",
+          alignItems: "center",
+          zIndex: 500,
           color: "white",
-          padding: "2rem 3rem",
-          borderRadius: "12px",
-          fontSize: "2rem",
-          fontWeight: "bold",
-          zIndex: 300,
-          textAlign: "center",
+          gap: "1rem",
+          userSelect: "none",
         }}
       >
-        {message}
-        <div style={{ marginTop: "1rem", fontSize: "1rem" }}>
-          Refresh page or go back to lobby to play again
-        </div>
+        <h1>{message}</h1>
+
+        {!rematchPending && !rematchInvite && (
+          <button
+            style={{ padding: "0.8rem 1.5rem", fontSize: "1rem" }}
+            onClick={() => {
+              wsRef.current?.send(JSON.stringify({ type: "INVITE_REMATCH" }));
+            }}
+          >
+            Rematch
+          </button>
+        )}
+
+        {rematchInvite && (
+          <button
+            style={{ padding: "0.8rem 1.5rem", fontSize: "1rem" }}
+            onClick={() => {
+              wsRef.current?.send(JSON.stringify({ type: "ACCEPT_REMATCH" }));
+            }}
+          >
+            Accept Rematch
+          </button>
+        )}
+        <button
+          style={{
+            padding: "0.6rem 1.2rem",
+            fontSize: "0.9rem",
+            background: "#444",
+            color: "white",
+          }}
+          onClick={handleReturnToLobby}
+        >
+          Return to Lobby
+        </button>
       </div>
     )}
     </div>

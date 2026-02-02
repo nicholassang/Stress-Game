@@ -79,6 +79,8 @@ wss.on("connection", (ws) => {
           playerOrder: [ws.id],
           countdownActive: false,
           game_state: null, 
+          rematchVotes: new Set(),
+          timeInterval: null,
         });
         ws.roomId = roomId;
 
@@ -177,6 +179,12 @@ wss.on("connection", (ws) => {
           state: game_state,
         });
 
+        broadcastRoom(roomId, {
+          type: "GAME_UPDATE",
+          state: room.game_state,
+          stressAvailable: computeStressAvailable(game),
+        });
+
         await ensurePlayableState(room, roomId);
         break;
       }
@@ -204,6 +212,8 @@ wss.on("connection", (ws) => {
             players: [ws, opponent],
             playerOrder: [ws.id, opponent.id],
             countdownActive: false,
+            rematchVotes: new Set(),   
+            timeInterval: null,
             game_state: {
               [ws.id]: {
                 deck: playerADeck,
@@ -223,10 +233,10 @@ wss.on("connection", (ws) => {
                   [playerBHand[3]],
                 ],
               },
-            center: {
-              pile1: { cards: [], autoRefilled: false },
-              pile2: { cards: [], autoRefilled: false },
-              },
+              center: {
+                pile1: { cards: [], autoRefilled: false },
+                pile2: { cards: [], autoRefilled: false },
+                },
             }
           };
 
@@ -238,7 +248,7 @@ wss.on("connection", (ws) => {
 
           // Set 10min timer
           const startTime = Date.now(); 
-          const duration = 10 * 60 * 10; 
+          const duration = 10 * 60 * 100; 
 
           room.startTime = startTime;
           room.duration = duration;
@@ -286,6 +296,7 @@ wss.on("connection", (ws) => {
           }
         });
         break;
+
       case "PLAY_CARD": {
         const room = rooms.get(ws.roomId);
         if (!room) return;
@@ -403,6 +414,99 @@ wss.on("connection", (ws) => {
           state: game,
           stressAvailable: computeStressAvailable(room.game_state)
         });
+        break;
+      }
+
+      case "INVITE_REMATCH": {
+        const room = rooms.get(ws.roomId);
+        if (!room) return;
+        if (!room.rematchVotes) {
+          room.rematchVotes = new Set();
+        }
+
+        room.rematchVotes.add(ws.id);
+
+        const opponent = room.players.find(p => p !== ws);
+        if (opponent?.readyState === WebSocket.OPEN) {
+          opponent.send(JSON.stringify({
+            type: "REMATCH_INVITE"
+          }));
+        }
+
+        ws.send(JSON.stringify({
+          type: "REMATCH_PENDING"
+        }));
+
+        break;
+      }
+      case "ACCEPT_REMATCH": {
+        const room = rooms.get(ws.roomId);
+        if (!room) return;
+
+        room.rematchVotes.add(ws.id);
+
+        // Both players accepted
+        if (room.rematchVotes.size === 2) {
+          room.rematchVotes.clear();
+
+          // 🔄 Reset game state
+          const deck = createDeck();
+          const playerADeck = deck.slice(0, 26);
+          const playerBDeck = deck.slice(26);
+
+          const playerA = room.players[0];
+          const playerB = room.players[1];
+
+          room.game_state = {
+            [playerA.id]: {
+              deck: playerADeck.slice(4),
+              hand: [
+                [playerADeck[0]],
+                [playerADeck[1]],
+                [playerADeck[2]],
+                [playerADeck[3]],
+              ],
+            },
+            [playerB.id]: {
+              deck: playerBDeck.slice(4),
+              hand: [
+                [playerBDeck[0]],
+                [playerBDeck[1]],
+                [playerBDeck[2]],
+                [playerBDeck[3]],
+              ],
+            },
+            center: {
+              pile1: { cards: [], autoRefilled: false },
+              pile2: { cards: [], autoRefilled: false },
+            },
+          };
+
+          await ensurePlayableState(room, ws.roomId);
+
+          // Restart timer
+          room.startTime = Date.now();
+          room.duration = 10 * 60 * 100;
+
+          room.timeInterval = setInterval(() => {
+            const remaining = room.duration - (Date.now() - room.startTime);
+            broadcastRoom(ws.roomId, {
+              type: "TIME_UPDATE",
+              remainingTime: remaining
+            });
+
+            if (remaining <= 0) {
+              clearInterval(room.timeInterval);
+              handleTimeUp(ws.roomId);
+            }
+          }, 1000);
+
+          broadcastRoom(ws.roomId, {
+            type: "REMATCH_START",
+            state: room.game_state
+          });
+        }
+
         break;
       }
       default:
@@ -563,7 +667,10 @@ function computeStressAvailable(game) {
   const pile1 = game.center.pile1;
   const pile2 = game.center.pile2;
 
-  if (pile1.autoRefilled || pile2.autoRefilled) return false; 
+  if (
+    pile1.autoRefilled && pile1.cards.length > 0 ||
+    pile2.autoRefilled && pile2.cards.length > 0
+  ) return false;
 
   const pile1Top = pile1.cards[0];
   const pile2Top = pile2.cards[0];
@@ -599,11 +706,18 @@ function generateRoomCode(length = 5) {
 function handleTimeUp(roomId) {
   const room = rooms.get(roomId);
   if (!room) return;
+
+  if (room.timeInterval) {
+    clearInterval(room.timeInterval);
+    room.timeInterval = null;
+  }
+
   const game = room.game_state;
 
   const playerIds = Object.keys(game).filter(id => id !== "center");
   const counts = playerIds.map(id => 
-    game[id].deck.length + game[id].hand.reduce((sum, stack) => sum + stack.length, 0)
+    game[id].deck.length +
+    game[id].hand.reduce((sum, stack) => sum + stack.length, 0)
   );
 
   let winner;
