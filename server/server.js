@@ -248,7 +248,7 @@ wss.on("connection", (ws) => {
 
           // Set 10min timer
           const startTime = Date.now(); 
-          const duration = 10 * 60 * 100; 
+          const duration = 10 * 60 * 500; 
 
           room.startTime = startTime;
           room.duration = duration;
@@ -322,6 +322,8 @@ wss.on("connection", (ws) => {
         }
 
         room.game_state.center[pile].cards.unshift(card);
+
+        if (checkForGameEnd(room, ws.roomId)) return;
 
         broadcastRoom(ws.roomId, {
           type: "GAME_UPDATE",
@@ -406,6 +408,8 @@ wss.on("connection", (ws) => {
           }
         }
 
+        if (checkForGameEnd(room, ws.roomId)) return;
+
         await ensurePlayableState(room, ws.roomId);
 
         // Broadcast updated state
@@ -486,7 +490,7 @@ wss.on("connection", (ws) => {
 
           // Restart timer
           room.startTime = Date.now();
-          room.duration = 10 * 60 * 100;
+          room.duration = 10 * 60 * 500;
 
           room.timeInterval = setInterval(() => {
             const remaining = room.duration - (Date.now() - room.startTime);
@@ -667,17 +671,20 @@ function computeStressAvailable(game) {
   const pile1 = game.center.pile1;
   const pile2 = game.center.pile2;
 
-  if (
-    pile1.autoRefilled && pile1.cards.length > 0 ||
-    pile2.autoRefilled && pile2.cards.length > 0
-  ) return false;
-
   const pile1Top = pile1.cards[0];
   const pile2Top = pile2.cards[0];
 
   if (!pile1Top || !pile2Top) return false;
 
-  return pile1Top.slice(0, -1) === pile2Top.slice(0, -1);
+  if (pile1Top.slice(0, -1) !== pile2Top.slice(0, -1)) {
+    return false;
+  }
+
+  if (hasAnyPlayableMove(game)) {
+    return false;
+  }
+
+  return true;
 }
 
 function drawFromDeckOrHand(player) {
@@ -728,6 +735,55 @@ function handleTimeUp(roomId) {
   broadcastRoom(roomId, {
     type: "GAME_END",
     winner
+  });
+}
+
+function checkForGameEnd(room, roomId) {
+  const game = room.game_state;
+  const playerIds = Object.keys(game).filter(id => id !== "center");
+
+  for (const pid of playerIds) {
+    const player = game[pid];
+
+    const handCount = player.hand.reduce(
+      (sum, stack) => sum + stack.length,
+      0
+    );
+
+    if (player.deck.length === 0 && handCount === 0) {
+      const winner = playerIds.find(id => id == pid) || null;
+
+      // Stop timer
+      if (room.timeInterval) {
+        clearInterval(room.timeInterval);
+        room.timeInterval = null;
+      }
+
+      broadcastRoom(roomId, {
+        type: "GAME_END",
+        winner
+      });
+
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function hasAnyPlayableMove(game) {
+  const piles = ["pile1", "pile2"];
+  const playerIds = Object.keys(game).filter(id => id !== "center");
+
+  return piles.some(pile => {
+    const topCard = game.center[pile].cards[0];
+    if (!topCard) return false;
+
+    return playerIds.some(pid =>
+      game[pid].hand.some(
+        stack => stack.length > 0 && isPlayable(stack[0], topCard)
+      )
+    );
   });
 }
 

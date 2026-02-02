@@ -283,6 +283,7 @@ function App() {
             div.style.height = "12px";
             div.style.borderRadius = "50%";
             div.style.background = "red";
+            div.style.zIndex = "100";
             div.style.pointerEvents = "none";
             div.style.transform = "translate(-50%, -50%)";
             container.appendChild(div);
@@ -439,7 +440,7 @@ function App() {
             {i === 0 && label ? label : ""}
           </div>
         ))}
-        {showCount && (
+        {showCount && gameState && (
           <div
             style={{
               position: "absolute",
@@ -847,6 +848,7 @@ function App() {
           height: 12,
           borderRadius: "50%",
           background: "blue",
+          zIndex: 100,
           transform: "translate(-50%, -50%)",
           pointerEvents: "none",
         }}
