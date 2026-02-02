@@ -88,6 +88,7 @@ function App() {
   const [gameEnded, setGameEnded] = useState(false);
   const [rematchInvite, setRematchInvite] = useState(false);
   const [rematchPending, setRematchPending] = useState(false);
+  const [allowRematch, setAllowRematch] = useState(true);
 
   // When the game starts, clear message baord
   useEffect(() => {
@@ -166,6 +167,9 @@ function App() {
           if (div && div.parentNode) div.parentNode.removeChild(div);
           delete opponentsRef.current[data.playerId];
           delete opponentDivsRef.current[data.playerId];
+          setAllowRematch(false);
+          setRematchInvite(false);
+          setRematchPending(false);
           break;
 
         case "ASSIGN_ID":
@@ -191,20 +195,30 @@ function App() {
           break;
 
         case "GAME_END":
-          const serverWinner: string | null = data.winner;
           setGameEnded(true);
 
-          const currentPlayerId = playerIdRef.current; 
-          if (serverWinner === null) {
-            setMessage("It's a tie!");
-          } else if (currentPlayerId && serverWinner === currentPlayerId) {
-            setMessage("You won!");
+          if (data.message) {
+            setMessage(data.message);
           } else {
-            setMessage("You lost!");
+            const serverWinner: string | null = data.winner;
+            const currentPlayerId = playerIdRef.current;
+            if (serverWinner === null) {
+              setMessage("It's a tie!");
+            } else if (currentPlayerId && serverWinner === currentPlayerId) {
+              setMessage("You won!");
+            } else {
+              setMessage("You lost!");
+            }
           }
-
-          setWinner(serverWinner);
+          setWinner(data.winner ?? null);
+          setAllowRematch(data.allowRematch ?? true);
+          if (data.allowRematch === false) {
+            setRematchInvite(false);
+            setRematchPending(false);
+            setHostJoinGameDisabled(true);
+          }
           break;
+          
         case "REMATCH_INVITE":
           setRematchInvite(true);
           setMessage("Opponent wants a rematch");
@@ -964,7 +978,7 @@ function App() {
       >
         <h1>{message}</h1>
 
-        {!rematchPending && !rematchInvite && (
+        {!rematchPending && !rematchInvite && allowRematch && (
           <button
             style={{ padding: "0.8rem 1.5rem", fontSize: "1rem" }}
             onClick={() => {

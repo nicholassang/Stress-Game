@@ -527,10 +527,19 @@ wss.on("connection", (ws) => {
     if (ws.roomId && rooms.has(ws.roomId)) {
       const room = rooms.get(ws.roomId);
       const opponent = room.players.find(p => p !== ws);
+
       if (opponent && opponent.readyState === WebSocket.OPEN) {
-        opponent.send(JSON.stringify({ type: "OPPONENT_DISCONNECTED" , playerId: ws.id}));
+        opponent.send(JSON.stringify({
+          type: "GAME_END",
+          winner: null,               
+          message: "Opponent disconnected",  
+          allowRematch: false         
+        }));
         opponent.roomId = null;
       }
+
+      if (room.timeInterval) clearInterval(room.timeInterval);
+
       rooms.delete(ws.roomId);
     }
   });
