@@ -105,13 +105,14 @@ function App() {
   const [rematchInvite, setRematchInvite] = useState(false);
   const [rematchPending, setRematchPending] = useState(false);
   const [allowRematch, setAllowRematch] = useState(true);
-  const [recentMatches, setRecentMatches] = useState<MatchRecord[]>(() => {
-    const pid = localStorage.getItem("playerId");
-    if (!pid) return [];
-    const stored = localStorage.getItem(`recentMatches_${pid}`);
-    return stored ? JSON.parse(stored) : [];
-  });
+  const [recentMatches, setRecentMatches] = useState<MatchRecord[]>([]);
   const opponentIdRef = useRef<string | null>(null);
+  const cursorEnabledRef = useRef(true);
+
+  // Call on game start / lobby load (from DB)
+  useEffect(() => {
+    if (playerId) fetchRecentMatches();
+  }, [playerId]);
 
   // When the game starts, clear message baord
   useEffect(() => {
@@ -124,6 +125,8 @@ function App() {
 
   // Stop opponent's cursor after a match
   useEffect(() => {
+    cursorEnabledRef.current = !gameEnded;
+
     if (gameEnded) {
       for (const div of Object.values(opponentDivsRef.current)) {
         if (div.parentNode) div.parentNode.removeChild(div);
@@ -155,12 +158,7 @@ function App() {
       window.removeEventListener('wheel', preventZoom as any);
       window.removeEventListener('keydown', preventZoom as any);
     };
-  }, []);
-
-  // Set recentMatches per player
-  useEffect(() => {
-    localStorage.setItem(`recentMatches_${playerId}`, JSON.stringify(recentMatches));
-  }, [recentMatches, playerId]);
+  }, [])
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -203,6 +201,7 @@ function App() {
           break;
 
         case "MOUSE_UPDATE":
+          if (!cursorEnabledRef.current) return;
           opponentsRef.current[data.playerId] = { x: data.x, y: data.y };
           break;
 
@@ -243,6 +242,12 @@ function App() {
         case "GAME_END":
           setGameEnded(true);
 
+          opponentsRef.current = {};
+          for (const div of Object.values(opponentDivsRef.current)) {
+            div.remove();
+          }
+          opponentDivsRef.current = {};
+
           if (data.message) {
             setMessage(data.message);
           } else {
@@ -268,8 +273,8 @@ function App() {
           const opponentId = opponentIdRef.current ?? "Unknown";
 
           // For recent matches
-          setRecentMatches(prev => [
-            {
+          setRecentMatches(prev => {
+            const newMatch: MatchRecord = {
               matchId: data.matchId ?? `${Date.now()}`,
               opponentId,
               result:
@@ -280,9 +285,15 @@ function App() {
                   : "lose",
               timestamp: Date.now(),
               allowRematch: data.allowRematch ?? true,
-            },
-            ...prev.slice(0, 3)
-          ]);
+            };
+
+            saveMatchToDB({
+              ...newMatch,
+              playerId,
+            });
+
+            return [newMatch, ...prev.slice(0, 3)];
+          });
           break;
 
         case "REMATCH_INVITE":
@@ -349,40 +360,55 @@ function App() {
 
   // requestAnimationFrame loop to render opponent cursors
   useEffect(() => {
-    const animate = () => {
-      if (gameEnded) return;
-      const container = document.getElementById("cursor-container");
-      if (container) {
-        const height = window.innerHeight;
-        for (const [id, pos] of Object.entries(opponentsRef.current)) {
-          let div = opponentDivsRef.current[id];
-          if (!div) {
-            // create div if it doesn't exist
-            div = document.createElement("div");
-            div.style.position = "absolute";
-            div.style.width = "12px";
-            div.style.height = "12px";
-            div.style.borderRadius = "50%";
-            div.style.background = "red";
-            div.style.zIndex = "100";
-            div.style.pointerEvents = "none";
-            div.style.transform = "translate(-50%, -50%)";
-            container.appendChild(div);
-            opponentDivsRef.current[id] = div;
-          }
-
-          // Inverse Opponent Cursor
-          const mirroredX = pos.x;
-          const mirroredY = height - pos.y;
-
-          div.style.left = `${mirroredX}px`;
-          div.style.top = `${mirroredY}px`;
-        }
+    if (gameEnded) {
+      for (const div of Object.values(opponentDivsRef.current)) {
+        div.remove();
       }
-      requestAnimationFrame(animate);
+      opponentDivsRef.current = {};
+      opponentsRef.current = {};
+      return;
+    }
+
+    let animationId: number;
+
+    const animate = () => {
+      if (!cursorEnabledRef.current) return;
+
+      const container = document.getElementById("cursor-container");
+      if (!container) return;
+
+      const height = window.innerHeight;
+
+      for (const [id, pos] of Object.entries(opponentsRef.current)) {
+        let div = opponentDivsRef.current[id];
+
+        if (!div) {
+          div = document.createElement("div");
+          div.style.position = "absolute";
+          div.style.width = "12px";
+          div.style.height = "12px";
+          div.style.borderRadius = "50%";
+          div.style.background = "red";
+          div.style.zIndex = "100";
+          div.style.pointerEvents = "none";
+          div.style.transform = "translate(-50%, -50%)";
+          container.appendChild(div);
+          opponentDivsRef.current[id] = div;
+        }
+
+        div.style.left = `${pos.x}px`;
+        div.style.top = `${height - pos.y}px`;
+      }
+
+      animationId = requestAnimationFrame(animate);
     };
+
     animate();
-  }, []);
+
+    return () => {
+      cancelAnimationFrame(animationId);
+    };
+  }, [gameEnded]);
 
   // Card Moving Animation
   useEffect(() => {
@@ -710,6 +736,34 @@ function App() {
     );
   };
 
+  // Save recent matches to Dynamo
+  const saveMatchToDB = async (match: MatchRecord & { playerId: string }) => {
+    try {
+      await fetch("https://ioqdbpqs68.execute-api.ap-southeast-1.amazonaws.com/Main/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(match),
+      });
+      // const text = await res.text();
+      // console.log("Save match response:", res.status, text);
+    } catch (err) {
+      console.error("Failed to save match:", err);
+    }
+  };
+
+  // Get recent matches from Dynamo
+  const fetchRecentMatches = async () => {
+    try {
+      const res = await fetch(`https://ioqdbpqs68.execute-api.ap-southeast-1.amazonaws.com/Main?playerId=${playerId}`);
+      const data = await res.json();
+      if (data.matches) {
+        setRecentMatches(data.matches);
+      } 
+    } catch (err) {
+      console.error("Failed to fetch matches:", err);
+    }
+  };
+
   // Player's Message Box
   const MessageBox = (
     <div
@@ -815,12 +869,13 @@ function App() {
               <input
                 type="text"
                 value={roomIdInput}
-                onChange={(e) => setRoomIdInput(e.target.value)}
+                onChange={(e) => setRoomIdInput(e.target.value.toUpperCase())}
                 placeholder="Room ID"
                 style={{
                   flex: 1,
                   padding: "0.7rem",
                   fontSize: "1rem",
+                  textTransform: "uppercase",
                 }}
                 disabled = {hostJoinGameDisabled}
               />
