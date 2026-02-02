@@ -76,8 +76,16 @@ function App() {
   const lastSentRef = useRef<number>(0);
   const [showStressBtn, setShowStressBtn] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
-  const [playerId, setPlayerId] = useState<string | null>(null);
   const playerIdRef = useRef<string | null>(null);
+  const [playerId, setPlayerId] = useState<string>(() => {
+    let pid = localStorage.getItem("playerId");
+    if (!pid) {
+      pid = crypto.randomUUID();
+      localStorage.setItem("playerId", pid);
+    }
+    playerIdRef.current = pid;
+    return pid;
+  });
   const [draggedStackIndex, setDraggedStackIndex] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [draggingCard, setDraggingCard] = useState<{
@@ -97,7 +105,12 @@ function App() {
   const [rematchInvite, setRematchInvite] = useState(false);
   const [rematchPending, setRematchPending] = useState(false);
   const [allowRematch, setAllowRematch] = useState(true);
-  const [recentMatches, setRecentMatches] = useState<MatchRecord[]>([]);
+  const [recentMatches, setRecentMatches] = useState<MatchRecord[]>(() => {
+    const pid = localStorage.getItem("playerId");
+    if (!pid) return [];
+    const stored = localStorage.getItem(`recentMatches_${pid}`);
+    return stored ? JSON.parse(stored) : [];
+  });
   const opponentIdRef = useRef<string | null>(null);
 
   // When the game starts, clear message baord
@@ -108,6 +121,17 @@ function App() {
       setHostJoinGameDisabled(false);
     }
   }, [gameState, gameEnded]);
+
+  // Stop opponent's cursor after a match
+  useEffect(() => {
+    if (gameEnded) {
+      for (const div of Object.values(opponentDivsRef.current)) {
+        if (div.parentNode) div.parentNode.removeChild(div);
+      }
+      opponentDivsRef.current = {};
+      opponentsRef.current = {};
+    }
+  }, [gameEnded]);
 
   // Prevent zoom
   useEffect(() => {
@@ -133,15 +157,10 @@ function App() {
     };
   }, []);
 
-  // Persists recent matches for user
+  // Set recentMatches per player
   useEffect(() => {
-    localStorage.setItem("recentMatches", JSON.stringify(recentMatches));
-  }, [recentMatches]);
-
-  useEffect(() => {
-    const stored = localStorage.getItem("recentMatches");
-    if (stored) setRecentMatches(JSON.parse(stored));
-  }, []);
+    localStorage.setItem(`recentMatches_${playerId}`, JSON.stringify(recentMatches));
+  }, [recentMatches, playerId]);
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -200,8 +219,9 @@ function App() {
 
         case "ASSIGN_ID":
           // console.log("ASSIGN_ID")
-          playerIdRef.current = data.playerId
+          playerIdRef.current = data.playerId;
           setPlayerId(data.playerId);
+          localStorage.setItem("playerId", data.playerId); 
           // console.log(playerIdRef)
           break;
 
@@ -261,7 +281,7 @@ function App() {
               timestamp: Date.now(),
               allowRematch: data.allowRematch ?? true,
             },
-            ...prev.slice(0, 9)
+            ...prev.slice(0, 3)
           ]);
           break;
 
@@ -330,6 +350,7 @@ function App() {
   // requestAnimationFrame loop to render opponent cursors
   useEffect(() => {
     const animate = () => {
+      if (gameEnded) return;
       const container = document.getElementById("cursor-container");
       if (container) {
         const height = window.innerHeight;
