@@ -60,6 +60,14 @@ interface CardProps {
   onDragStart?: () => void;
 }
 
+interface MatchRecord {
+  matchId: string;          
+  opponentId: string;        
+  result: "win" | "lose" | "tie";
+  timestamp: number;         
+  allowRematch: boolean;    
+}
+
 function App() {
   const wsRef = useRef<WebSocket | null>(null);
   const localCursorRef = useRef<HTMLDivElement | null>(null);
@@ -68,8 +76,16 @@ function App() {
   const lastSentRef = useRef<number>(0);
   const [showStressBtn, setShowStressBtn] = useState(false);
   const [gameState, setGameState] = useState<GameState | null>(null);
-  const [playerId, setPlayerId] = useState<string | null>(null);
   const playerIdRef = useRef<string | null>(null);
+  const [playerId, setPlayerId] = useState<string>(() => {
+    let pid = localStorage.getItem("playerId");
+    if (!pid) {
+      pid = crypto.randomUUID();
+      localStorage.setItem("playerId", pid);
+    }
+    playerIdRef.current = pid;
+    return pid;
+  });
   const [draggedStackIndex, setDraggedStackIndex] = useState<number | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const [draggingCard, setDraggingCard] = useState<{
@@ -88,6 +104,14 @@ function App() {
   const [gameEnded, setGameEnded] = useState(false);
   const [rematchInvite, setRematchInvite] = useState(false);
   const [rematchPending, setRematchPending] = useState(false);
+  const [allowRematch, setAllowRematch] = useState(true);
+  const [recentMatches, setRecentMatches] = useState<MatchRecord[]>(() => {
+    const pid = localStorage.getItem("playerId");
+    if (!pid) return [];
+    const stored = localStorage.getItem(`recentMatches_${pid}`);
+    return stored ? JSON.parse(stored) : [];
+  });
+  const opponentIdRef = useRef<string | null>(null);
 
   // When the game starts, clear message baord
   useEffect(() => {
@@ -97,6 +121,17 @@ function App() {
       setHostJoinGameDisabled(false);
     }
   }, [gameState, gameEnded]);
+
+  // Stop opponent's cursor after a match
+  useEffect(() => {
+    if (gameEnded) {
+      for (const div of Object.values(opponentDivsRef.current)) {
+        if (div.parentNode) div.parentNode.removeChild(div);
+      }
+      opponentDivsRef.current = {};
+      opponentsRef.current = {};
+    }
+  }, [gameEnded]);
 
   // Prevent zoom
   useEffect(() => {
@@ -121,6 +156,11 @@ function App() {
       window.removeEventListener('keydown', preventZoom as any);
     };
   }, []);
+
+  // Set recentMatches per player
+  useEffect(() => {
+    localStorage.setItem(`recentMatches_${playerId}`, JSON.stringify(recentMatches));
+  }, [recentMatches, playerId]);
 
   // Connect WS and matchmaking
   useEffect(() => {
@@ -154,6 +194,12 @@ function App() {
           // console.log("Match found!", data.players);
           // console.log("Room State", data.state);
           setGameState(data.state);
+          if (playerIdRef.current) {
+            const opponentId = Object.keys(data.state).find(
+              id => id !== "center" && id !== playerIdRef.current
+            );
+            opponentIdRef.current = opponentId ?? null;
+          }
           break;
 
         case "MOUSE_UPDATE":
@@ -166,12 +212,16 @@ function App() {
           if (div && div.parentNode) div.parentNode.removeChild(div);
           delete opponentsRef.current[data.playerId];
           delete opponentDivsRef.current[data.playerId];
+          setAllowRematch(false);
+          setRematchInvite(false);
+          setRematchPending(false);
           break;
 
         case "ASSIGN_ID":
           // console.log("ASSIGN_ID")
-          playerIdRef.current = data.playerId
+          playerIdRef.current = data.playerId;
           setPlayerId(data.playerId);
+          localStorage.setItem("playerId", data.playerId); 
           // console.log(playerIdRef)
           break;
 
@@ -191,20 +241,50 @@ function App() {
           break;
 
         case "GAME_END":
-          const serverWinner: string | null = data.winner;
           setGameEnded(true);
 
-          const currentPlayerId = playerIdRef.current; 
-          if (serverWinner === null) {
-            setMessage("It's a tie!");
-          } else if (currentPlayerId && serverWinner === currentPlayerId) {
-            setMessage("You won!");
+          if (data.message) {
+            setMessage(data.message);
           } else {
-            setMessage("You lost!");
+            const serverWinner: string | null = data.winner;
+            const currentPlayerId = playerIdRef.current;
+            if (serverWinner === null) {
+              setMessage("It's a tie!");
+            } else if (currentPlayerId && serverWinner === currentPlayerId) {
+              setMessage("You won!");
+            } else {
+              setMessage("You lost!");
+            }
+          }
+          setWinner(data.winner ?? null);
+          setAllowRematch(data.allowRematch ?? true);
+
+          if (data.allowRematch === false) {
+            setRematchInvite(false);
+            setRematchPending(false);
+            setHostJoinGameDisabled(true);
           }
 
-          setWinner(serverWinner);
+          const opponentId = opponentIdRef.current ?? "Unknown";
+
+          // For recent matches
+          setRecentMatches(prev => [
+            {
+              matchId: data.matchId ?? `${Date.now()}`,
+              opponentId,
+              result:
+                playerIdRef.current === data.winner
+                  ? "win"
+                  : data.winner === null
+                  ? "tie"
+                  : "lose",
+              timestamp: Date.now(),
+              allowRematch: data.allowRematch ?? true,
+            },
+            ...prev.slice(0, 3)
+          ]);
           break;
+
         case "REMATCH_INVITE":
           setRematchInvite(true);
           setMessage("Opponent wants a rematch");
@@ -270,6 +350,7 @@ function App() {
   // requestAnimationFrame loop to render opponent cursors
   useEffect(() => {
     const animate = () => {
+      if (gameEnded) return;
       const container = document.getElementById("cursor-container");
       if (container) {
         const height = window.innerHeight;
@@ -571,6 +652,64 @@ function App() {
     setDraggedStackIndex(null);
   };
 
+  const RecentMatches: React.FC<{ matches: MatchRecord[] }> = ({ matches }) => {
+    return (
+      <div
+        style={{
+          position: "absolute",
+          top: "10%",
+          left: "5%",
+          width: "260px",
+          padding: "1rem",
+          background: "rgba(0,0,0,0.6)",
+          borderRadius: "12px",
+          color: "white",
+          fontSize: "0.85rem",
+          zIndex: 300,
+          userSelect: "none",
+        }}
+      >
+        <h3 style={{ marginBottom: "0.5rem" }}>Recent Matches</h3>
+        {matches.length === 0 && <div>No recent matches</div>}
+        {matches.map((m) => (
+          <div
+            key={m.matchId}
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              marginBottom: "0.5rem",
+              background: "rgba(255,255,255,0.1)",
+              padding: "0.5rem",
+              borderRadius: "6px",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between" }}>
+              <span>ID: {m.matchId}</span>
+              <span
+                style={{
+                  color:
+                    m.result === "win"
+                      ? "#4ade80"
+                      : m.result === "lose"
+                      ? "#f87171"
+                      : "#facc15",
+                  fontWeight: "bold",
+                }}
+              >
+                {m.result.toUpperCase()}
+              </span>
+            </div>
+            <div>Opponent: {m.opponentId}</div>
+            <div>
+              Time: {new Date(m.timestamp).toLocaleString()}
+            </div>
+            <div>Rematch allowed: {m.allowRematch ? "Yes" : "No"}</div>
+          </div>
+        ))}
+      </div>
+    );
+  };
+
   // Player's Message Box
   const MessageBox = (
     <div
@@ -769,6 +908,11 @@ function App() {
               </div>
             )}
           </div>
+
+          {/* Recent Matches Panel */}
+          {(
+            <RecentMatches matches={recentMatches} />
+          )}
         </div>
       )}
 
@@ -964,7 +1108,7 @@ function App() {
       >
         <h1>{message}</h1>
 
-        {!rematchPending && !rematchInvite && (
+        {!rematchPending && !rematchInvite && allowRematch && (
           <button
             style={{ padding: "0.8rem 1.5rem", fontSize: "1rem" }}
             onClick={() => {
@@ -992,7 +1136,10 @@ function App() {
             background: "#444",
             color: "white",
           }}
-          onClick={handleReturnToLobby}
+          onClick={()=>{
+            handleReturnToLobby()
+            wsRef.current?.send(JSON.stringify({ type: "LEAVE_ROOM" }));
+          }}
         >
           Return to Lobby
         </button>
