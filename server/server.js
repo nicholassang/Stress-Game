@@ -121,6 +121,14 @@ wss.on("connection", (ws) => {
         const playerAHand = playerADeck.splice(0, 4);
         const playerBHand = playerBDeck.splice(0, 4);
 
+        if (!room.players || room.players.length < 2) {
+          console.warn("Not enough players", {
+            roomId: room.id,
+            players: room.players?.length ?? 0,
+          });
+          return;
+        }
+
         const game_state = {
           [room.players[0].id]: {
             deck: playerADeck,
