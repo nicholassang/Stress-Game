@@ -152,7 +152,7 @@ wss.on("connection", (ws) => {
 
         // Set 10min timer
         const startTime = Date.now(); 
-        const duration = 10 * 60 * 10; 
+        const duration = 10 * 60 * 500; 
 
         room.startTime = startTime;
         room.duration = duration;
@@ -248,7 +248,7 @@ wss.on("connection", (ws) => {
 
           // Set 5min timer
           const startTime = Date.now(); 
-          const duration = 10 * 60 * 10; 
+          const duration = 10 * 60 * 500; 
 
           room.startTime = startTime;
           room.duration = duration;
@@ -490,7 +490,7 @@ wss.on("connection", (ws) => {
 
           // Restart timer
           room.startTime = Date.now();
-          room.duration = 10 * 60 * 10;
+          room.duration = 10 * 60 * 500;
 
           room.timeInterval = setInterval(() => {
             const remaining = room.duration - (Date.now() - room.startTime);
