@@ -2,10 +2,10 @@
 A favourite childhood game of mine, now playable on web. 
 
 ## Technical
-Client: Typescript + React
-Server: Express + Node.js + Websockets
-Deployment: AWS EC2
-DB for recent matches panel: AWS API Gateway, Lambda (GET/POST), Dynamodb
+- Client: Typescript + React
+- Server: Express + Node.js + Websockets
+- Deployment: AWS EC2
+- DB for recent matches panel: AWS API Gateway, Lambda (GET/POST), Dynamodb
 
 ## Find a match, or host and join a room
 <img width="959" height="472" alt="Stress Game Main Page" src="https://github.com/user-attachments/assets/750699a6-82c7-4df9-a49d-0444dd4217c4" />
