@@ -654,7 +654,7 @@ async function ensurePlayableState(room, roomId) {
 
   // Trigger countdown if no playable cards and stress not available
   if (!anyPlayable && !stressAvailable) {
-    console.log("⏳ No playable cards on both piles — starting countdown");
+    console.log("No playable cards on both piles");
 
     room.countdownActive = true;
 
@@ -680,6 +680,9 @@ async function ensurePlayableState(room, roomId) {
       stressAvailable: computeStressAvailable(room.game_state) 
     });
     room.countdownActive = false;
+
+    // After Stress, check for any winners
+    checkForGameEnd(room, roomId);
 
     for (const pile of piles) {
       game.center[pile].autoRefilled = false;
@@ -818,6 +821,6 @@ function hasAnyPlayableMove(game) {
   });
 }
 
-server.listen(8080, () => {
+server.listen(8080, "0.0.0.0", () => {
   console.log("Backend + WS server running on http://localhost:8080");
 });
