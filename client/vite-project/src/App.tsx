@@ -162,7 +162,7 @@ function App() {
 
   // Connect WS and matchmaking
   useEffect(() => {
-    const ws = new WebSocket("ws://localhost:8080/ws");
+    const ws = new WebSocket("ws://https://www.stressgame.nicholassang.com/ws");
     wsRef.current = ws;
 
     // Connection Begin
